@@ -1,0 +1,25 @@
+[Unit]
+Description=ra-killer NYC Event Aggregator
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/ra-killer
+ExecStart=/opt/ra-killer/.venv/bin/python -m src.main
+Restart=always
+RestartSec=10
+EnvironmentFile=/opt/ra-killer/.env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ra-killer
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ra-killer
+
+[Install]
+WantedBy=multi-user.target

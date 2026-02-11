@@ -1,0 +1,42 @@
+[project]
+name = "ra-killer"
+version = "0.1.0"
+description = "NYC Event Aggregator + Recommendation System"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "supabase>=2.0",
+    "python-telegram-bot>=21.0",
+    "twilio>=9.0",
+    "anthropic>=0.40",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "apscheduler>=3.10,<4",
+    "structlog>=24.0",
+    "tenacity>=9.0",
+    "thefuzz[speedup]>=0.22",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-httpx>=0.34",
+    "respx>=0.22",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
