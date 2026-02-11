@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Seed the taste_profile table with initial preferences."""
+"""Seed the taste_profile table with initial preferences from CSVs."""
 
+import csv
 import sys
 from pathlib import Path
 
@@ -9,30 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src import db
 from src.models import TasteEntry
 
-# === CUSTOMIZE THESE ===
-
-ARTISTS = [
-    # (name, weight) - weight 2.0 = strong favorite, 1.0 = like, -1.0 = avoid
-    ("Honey Dijon", 2.0),
-    ("DJ Harvey", 2.0),
-    ("Floating Points", 2.0),
-    ("Four Tet", 1.5),
-    ("Ben UFO", 1.5),
-    ("Joy Orbison", 1.5),
-    ("Bicep", 1.0),
-    ("Peggy Gou", 1.0),
-]
-
-VENUES = [
-    ("Nowadays", 2.0),
-    ("Basement", 1.5),
-    ("Knockdown Center", 1.5),
-    ("Good Room", 1.0),
-    ("Elsewhere", 1.0),
-    ("Public Records", 1.0),
-    ("Market Hotel", 0.5),
-    ("Bossa Nova Civic Club", 0.5),
-]
+ROOT = Path(__file__).resolve().parent.parent
 
 GENRES = [
     ("house", 2.0),
@@ -51,16 +29,62 @@ VIBES = [
 ]
 
 
+def _load_artists_csv() -> list[tuple[str, float]]:
+    """Load artists from bandcamp_artists.csv where weight > 0."""
+    path = ROOT / "bandcamp_artists.csv"
+    artists = []
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = row["artist"].strip()
+            weight_str = row.get("weight", "").strip()
+            if not name or not weight_str:
+                continue
+            try:
+                weight = float(weight_str)
+            except ValueError:
+                continue
+            if weight > 0:
+                artists.append((name, weight))
+    return artists
+
+
+def _load_venues_csv() -> list[tuple[str, float]]:
+    """Load venues from venues.csv where weight > 0."""
+    path = ROOT / "venues.csv"
+    venues = []
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = row["venue"].strip()
+            weight_str = row.get("weight", "").strip()
+            if not name or not weight_str:
+                continue
+            try:
+                weight = float(weight_str)
+            except ValueError:
+                continue
+            if weight > 0:
+                venues.append((name, weight))
+    return venues
+
+
 def main():
     entries = []
-    for name, weight in ARTISTS:
-        entries.append(TasteEntry(category="artist", name=name, weight=weight))
-    for name, weight in VENUES:
-        entries.append(TasteEntry(category="venue", name=name, weight=weight))
+
+    # Load from CSVs
+    artists = _load_artists_csv()
+    venues = _load_venues_csv()
+    print(f"Loaded {len(artists)} artists from CSV, {len(venues)} venues from CSV")
+
+    for name, weight in artists:
+        entries.append(TasteEntry(category="artist", name=name, weight=weight, source="manual"))
+    for name, weight in venues:
+        entries.append(TasteEntry(category="venue", name=name, weight=weight, source="manual"))
     for name, weight in GENRES:
-        entries.append(TasteEntry(category="genre", name=name, weight=weight))
+        entries.append(TasteEntry(category="genre", name=name, weight=weight, source="manual"))
     for name, weight in VIBES:
-        entries.append(TasteEntry(category="vibe", name=name, weight=weight))
+        entries.append(TasteEntry(category="vibe", name=name, weight=weight, source="manual"))
 
     for entry in entries:
         db.upsert_taste_entry(entry)

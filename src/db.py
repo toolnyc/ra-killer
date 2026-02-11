@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 from supabase import create_client
 
@@ -118,6 +118,30 @@ def get_upcoming_events(from_date: date | None = None) -> list[Event]:
     return events
 
 
+def get_past_events(days_back: int = 60) -> list[Event]:
+    """Get canonical events from past N days (for training)."""
+    today = date.today()
+    since = today - timedelta(days=days_back)
+    result = (
+        get_client()
+        .table("events")
+        .select("*")
+        .lt("event_date", today.isoformat())
+        .gte("event_date", since.isoformat())
+        .order("event_date", desc=True)
+        .execute()
+    )
+    events = []
+    for row in result.data:
+        row["event_date"] = _parse_date(row.get("event_date"))
+        row["start_time"] = _parse_time(row.get("start_time"))
+        row["end_time"] = _parse_time(row.get("end_time"))
+        if isinstance(row.get("source_urls"), str):
+            row["source_urls"] = json.loads(row["source_urls"])
+        events.append(Event(**row))
+    return events
+
+
 def get_canonical_events_by_date_venue(
     event_date: date, venue_name: str | None
 ) -> list[Event]:
@@ -207,6 +231,17 @@ def update_recommendation_message_id(rec_id: str, message_id: int) -> None:
     get_client().table("recommendations").update(
         {"telegram_message_id": message_id}
     ).eq("id", rec_id).execute()
+
+
+def get_recommended_event_ids() -> set[str]:
+    """Get event IDs that already have recommendations."""
+    result = (
+        get_client()
+        .table("recommendations")
+        .select("event_id")
+        .execute()
+    )
+    return {row["event_id"] for row in result.data}
 
 
 def get_recommendation_by_message_id(message_id: int) -> dict | None:

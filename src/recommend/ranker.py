@@ -101,6 +101,35 @@ async def rank_events(
     return recs
 
 
+async def run_training_pipeline(
+    days_back: int = 60,
+    top_n: int = 10,
+    exclude_recommended: bool = True,
+) -> list[Recommendation]:
+    """Score past events for training — lets the user give feedback to refine taste."""
+    events = db.get_past_events(days_back)
+    if not events:
+        logger.warning("no_past_events", msg="No past events found for training")
+        return []
+
+    if exclude_recommended:
+        already = db.get_recommended_event_ids()
+        events = [e for e in events if e.id not in already]
+        if not events:
+            logger.info("all_past_events_already_recommended")
+            return []
+
+    taste = TasteProfile()
+    recs = await rank_events(events, taste, top_n=top_n)
+
+    for rec in recs:
+        rec_id = db.save_recommendation(rec)
+        rec.id = rec_id
+
+    logger.info("training_pipeline_complete", count=len(recs))
+    return recs
+
+
 async def run_recommendation_pipeline(top_n: int = 10) -> list[Recommendation]:
     """Full pipeline: load events, load taste, rank, save recommendations."""
     events = db.get_upcoming_events()

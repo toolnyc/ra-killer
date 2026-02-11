@@ -14,7 +14,7 @@ from src import db
 from src.config import settings
 from src.log import get_logger
 from src.models import Event, Recommendation, TasteEntry
-from src.recommend.ranker import run_recommendation_pipeline
+from src.recommend.ranker import run_recommendation_pipeline, run_training_pipeline
 
 logger = get_logger("telegram")
 
@@ -36,6 +36,7 @@ def _register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("add_artist", cmd_add_artist))
     app.add_handler(CommandHandler("add_venue", cmd_add_venue))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("train", cmd_train))
     app.add_handler(CallbackQueryHandler(handle_feedback))
 
 
@@ -47,6 +48,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/taste - View your taste profile\n"
         "/add_artist <name> - Add a favorite artist\n"
         "/add_venue <name> - Add a favorite venue\n"
+        "/train [N] - Score N past events for taste training\n"
         "/status - System status"
     )
 
@@ -127,6 +129,45 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     lines.append(f"\n<b>Upcoming events:</b> {event_count}")
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+async def cmd_train(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Score past events for taste training with Going/Pass feedback."""
+    top_n = 10
+    if context.args:
+        try:
+            top_n = int(context.args[0])
+            top_n = max(1, min(top_n, 50))
+        except ValueError:
+            await update.message.reply_text("Usage: /train [number] (e.g. /train 15)")
+            return
+
+    status_msg = await update.message.reply_text(f"Scoring {top_n} past events...")
+
+    recs = await run_training_pipeline(top_n=top_n)
+    if not recs:
+        await status_msg.edit_text("No past events to score (all may already be rated).")
+        return
+
+    events_map = {e.id: e for e in db.get_past_events()}
+
+    sent = 0
+    for rec in recs:
+        event = events_map.get(rec.event_id)
+        if not event:
+            continue
+
+        text, keyboard = _format_recommendation(rec, event)
+        msg = await update.message.chat.send_message(
+            text=text,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
+        )
+        db.update_recommendation_message_id(rec.id, msg.message_id)
+        sent += 1
+
+    await status_msg.edit_text(f"Sent {sent} past events for training. Tap Going/Pass to refine your taste!")
 
 
 async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
