@@ -173,32 +173,53 @@ async def cmd_train(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle inline keyboard feedback (Going/Pass)."""
     query = update.callback_query
-    await query.answer()
 
     data = query.data  # format: "approve:rec_id" or "reject:rec_id"
     if ":" not in data:
+        await query.answer()
         return
 
     action, rec_id = data.split(":", 1)
     if action not in ("approve", "reject"):
+        await query.answer()
         return
 
-    db.update_recommendation_feedback(rec_id, action)
-
-    # Update taste weights based on feedback
+    # Check if already processed (idempotency guard for duplicate callbacks)
     rec_data = db.get_recommendation_by_message_id(query.message.message_id)
-    if rec_data and rec_data.get("events"):
-        ev = rec_data["events"]
-        delta = 0.1 if action == "approve" else -0.1
-
-        for artist in ev.get("artists") or []:
-            db.update_taste_weight("artist", artist, delta)
-
-        if ev.get("venue_name"):
-            db.update_taste_weight("venue", ev["venue_name"], delta)
+    if rec_data and rec_data.get("feedback"):
+        await query.answer("Already recorded!")
+        # Ensure buttons are removed even on duplicate
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass  # Already removed by the first callback
+        return
 
     label = "Going!" if action == "approve" else "Pass"
-    await query.edit_message_reply_markup(reply_markup=None)
+
+    # Remove buttons immediately to prevent double-clicks
+    await query.answer(label)
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass  # Race: another callback already removed it
+
+    # Persist feedback and update taste weights
+    try:
+        db.update_recommendation_feedback(rec_id, action)
+
+        if rec_data and rec_data.get("events"):
+            ev = rec_data["events"]
+            delta = 0.1 if action == "approve" else -0.1
+
+            for artist in ev.get("artists") or []:
+                db.update_taste_weight("artist", artist, delta)
+
+            if ev.get("venue_name"):
+                db.update_taste_weight("venue", ev["venue_name"], delta)
+    except Exception:
+        logger.exception("feedback_processing_failed", rec_id=rec_id, action=action)
+
     await query.message.reply_text(f"Marked as: {label}")
 
 
