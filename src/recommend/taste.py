@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src import db
 from src.models import TasteEntry
+from src.normalize import normalize, normalize_artist, normalize_venue
 
 
 class TasteProfile:
@@ -11,22 +12,31 @@ class TasteProfile:
         self._entries = entries if entries is not None else db.get_taste_profile()
         self._by_category: dict[str, dict[str, float]] = {}
         for e in self._entries:
-            self._by_category.setdefault(e.category, {})[e.name.lower()] = e.weight
+            key = self._normalize_entry(e.category, e.name)
+            self._by_category.setdefault(e.category, {})[key] = e.weight
+
+    @staticmethod
+    def _normalize_entry(category: str, name: str) -> str:
+        if category == "artist":
+            return normalize_artist(name)
+        if category == "venue":
+            return normalize_venue(name)
+        return normalize(name)
 
     def artist_weight(self, name: str) -> float:
-        return self._by_category.get("artist", {}).get(name.lower(), 0.0)
+        return self._by_category.get("artist", {}).get(normalize_artist(name), 0.0)
 
     def venue_weight(self, name: str) -> float:
-        return self._by_category.get("venue", {}).get(name.lower(), 0.0)
+        return self._by_category.get("venue", {}).get(normalize_venue(name), 0.0)
 
     def genre_weight(self, name: str) -> float:
-        return self._by_category.get("genre", {}).get(name.lower(), 0.0)
+        return self._by_category.get("genre", {}).get(normalize(name), 0.0)
 
     def promoter_weight(self, name: str) -> float:
-        return self._by_category.get("promoter", {}).get(name.lower(), 0.0)
+        return self._by_category.get("promoter", {}).get(normalize(name), 0.0)
 
     def vibe_weight(self, name: str) -> float:
-        return self._by_category.get("vibe", {}).get(name.lower(), 0.0)
+        return self._by_category.get("vibe", {}).get(normalize(name), 0.0)
 
     def known_artists(self) -> dict[str, float]:
         return self._by_category.get("artist", {})

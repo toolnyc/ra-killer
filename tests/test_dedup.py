@@ -1,11 +1,11 @@
 from datetime import date
 
 from src.models import Event, ScrapedEvent, Source
+from src.normalize import normalize
 from src.scrapers.runner import (
     artist_jaccard,
     is_fuzzy_match,
     merge_into_canonical,
-    normalize,
 )
 
 

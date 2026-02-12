@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
-import unicodedata
 from datetime import date
 
 from thefuzz import fuzz
@@ -10,6 +8,7 @@ from thefuzz import fuzz
 from src import db
 from src.log import get_logger
 from src.models import Event, ScrapedEvent
+from src.normalize import normalize, normalize_artist_list, normalize_venue
 from src.scrapers.basement import BasementScraper
 from src.scrapers.dice import DICEScraper
 from src.scrapers.lightandsound import LightAndSoundScraper
@@ -29,19 +28,16 @@ ALL_SCRAPERS = [
 ]
 
 
-def normalize(s: str) -> str:
-    """Normalize string for comparison: lowercase, strip punctuation, collapse whitespace."""
-    s = unicodedata.normalize("NFKD", s.lower())
-    s = re.sub(r"[^\w\s]", "", s)
-    return re.sub(r"\s+", " ", s).strip()
-
-
 def artist_jaccard(a: list[str], b: list[str]) -> float:
-    """Jaccard similarity of two artist lists (normalized)."""
+    """Jaccard similarity of two artist lists (normalized).
+
+    Uses normalize_artist_list which strips qualifiers like (Live), (DJ Set)
+    and splits b2b entries into individual artists.
+    """
     if not a or not b:
         return 0.0
-    set_a = {normalize(x) for x in a}
-    set_b = {normalize(x) for x in b}
+    set_a = normalize_artist_list(a)
+    set_b = normalize_artist_list(b)
     intersection = set_a & set_b
     union = set_a | set_b
     return len(intersection) / len(union) if union else 0.0
@@ -72,7 +68,7 @@ def is_fuzzy_match(a: ScrapedEvent, b: Event) -> bool:
     # Venue
     if a.venue_name and b.venue_name:
         venue_score = fuzz.token_sort_ratio(
-            normalize(a.venue_name), normalize(b.venue_name)
+            normalize_venue(a.venue_name), normalize_venue(b.venue_name)
         )
         if venue_score > 90:
             checks += 1
@@ -184,11 +180,11 @@ def deduplicate_and_store(all_events: dict[str, list[ScrapedEvent]]) -> int:
         existing = db.get_canonical_events_by_date_venue(event_date, None)
         existing_map: dict[str, Event] = {}  # normalized key -> Event
         for e in existing:
-            key = f"{normalize(e.title)}|{e.event_date}|{normalize(e.venue_name or '')}"
+            key = f"{normalize(e.title)}|{e.event_date}|{normalize_venue(e.venue_name or '')}"
             existing_map[key] = e
 
         for scraped in scraped_list:
-            key = f"{normalize(scraped.title)}|{scraped.event_date}|{normalize(scraped.venue_name or '')}"
+            key = f"{normalize(scraped.title)}|{scraped.event_date}|{normalize_venue(scraped.venue_name or '')}"
 
             # Exact match
             if key in existing_map:
