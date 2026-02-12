@@ -12,7 +12,6 @@ def _make_taste() -> TasteProfile:
             TasteEntry(category="artist", name="DJ Harvey", weight=2.0),
             TasteEntry(category="venue", name="Nowadays", weight=2.0),
             TasteEntry(category="venue", name="Bad Venue", weight=-1.0),
-            TasteEntry(category="genre", name="house", weight=1.5),
         ]
     )
 
@@ -82,4 +81,4 @@ def test_taste_profile_prompt():
     text = taste.to_prompt_text()
     assert "honey dijon" in text
     assert "nowadays" in text
-    assert "house" in text
+    assert "genre" not in text.lower()

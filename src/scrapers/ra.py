@@ -41,14 +41,15 @@ query GET_DEFAULT_EVENTS_LISTING(
 class RAScraper(BaseScraper):
     name = "ra"
 
-    async def scrape(self) -> list[ScrapedEvent]:
+    async def scrape(self, from_date: date | None = None) -> list[ScrapedEvent]:
         events: list[ScrapedEvent] = []
         page = 1
+        listing_from = (from_date or date.today()).isoformat()
         while True:
             variables = {
                 "filters": {
                     "areas": {"eq": AREA_ID},
-                    "listingDate": {"gte": date.today().isoformat()},
+                    "listingDate": {"gte": listing_from},
                 },
                 "pageSize": 100,
                 "page": page,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 
 import anthropic
 
@@ -66,8 +67,8 @@ def heuristic_prefilter(
 
     scored.sort(key=lambda x: -x[1])
 
-    # Take a sample of unknowns for discovery
-    discovery = unknown[:discovery_count]
+    # Take a random sample of unknowns for discovery
+    discovery = random.sample(unknown, min(discovery_count, len(unknown)))
 
     return scored, discovery
 
@@ -128,10 +129,10 @@ Return a JSON array with one object per event:
 [{{"index": 0, "score": 75, "reasoning": "one sentence why", "tags": ["house", "brooklyn"]}}]
 
 Rules:
-- Score 80-100: Strong match (known favorite artists/venues/genres)
+- Score 80-100: Strong match (known favorite artists/venues)
 - Score 50-79: Likely match (similar style, good venue, interesting lineup)
 - Score 20-49: Possible match (some relevant elements)
-- Score 0-19: Poor match (wrong genre, disliked venue, etc.)
+- Score 0-19: Poor match (disliked venue, uninteresting lineup, etc.)
 - Be generous with discovery: unknown-but-promising events should get 40-60
 - Return ONLY valid JSON, no markdown fences"""
 

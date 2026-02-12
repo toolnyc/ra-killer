@@ -7,6 +7,7 @@ from supabase import create_client
 
 from src.config import settings
 from src.models import Event, Recommendation, ScrapedEvent, TasteEntry
+from src.normalize import normalize_artist, normalize_venue
 
 _client = None
 
@@ -68,6 +69,12 @@ def upsert_raw_events(events: list[ScrapedEvent]) -> int:
     if not events:
         return 0
     rows = [_serialize_event(e) for e in events]
+    # Deduplicate within the batch — Postgres ON CONFLICT can't handle
+    # the same (source, source_id) appearing twice in one INSERT.
+    seen: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        seen[(r["source"], r["source_id"])] = r
+    rows = list(seen.values())
     result = (
         get_client()
         .table("raw_events")
@@ -176,13 +183,21 @@ def get_taste_profile() -> list[TasteEntry]:
 
 def upsert_taste_entry(entry: TasteEntry) -> None:
     row = entry.model_dump(exclude={"id"})
+    if entry.category == "artist":
+        row["name"] = normalize_artist(row["name"])
+    elif entry.category == "venue":
+        row["name"] = normalize_venue(row["name"])
     get_client().table("taste_profile").upsert(
         row, on_conflict="category,name"
     ).execute()
 
 
 def update_taste_weight(category: str, name: str, delta: float) -> None:
-    """Adjust a taste entry's weight by delta, clamped to [-1, 1] floor."""
+    """Adjust a taste entry's weight by delta, clamped to [-1, 3]."""
+    if category == "artist":
+        name = normalize_artist(name)
+    elif category == "venue":
+        name = normalize_venue(name)
     entries = (
         get_client()
         .table("taste_profile")
@@ -193,7 +208,7 @@ def update_taste_weight(category: str, name: str, delta: float) -> None:
     )
     if entries.data:
         current = entries.data[0]["weight"]
-        new_weight = max(-1.0, current + delta)
+        new_weight = max(-1.0, min(3.0, current + delta))
         (
             get_client()
             .table("taste_profile")
@@ -206,7 +221,7 @@ def update_taste_weight(category: str, name: str, delta: float) -> None:
             TasteEntry(
                 category=category,
                 name=name,
-                weight=max(-1.0, delta),
+                weight=max(-1.0, min(3.0, delta)),
                 source="learned",
             )
         )

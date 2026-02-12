@@ -12,22 +12,6 @@ from src.models import TasteEntry
 
 ROOT = Path(__file__).resolve().parent.parent
 
-GENRES = [
-    ("house", 2.0),
-    ("techno", 1.5),
-    ("disco", 1.5),
-    ("ambient", 1.0),
-    ("dnb", 0.5),
-    ("breakbeat", 1.0),
-]
-
-VIBES = [
-    ("underground", 1.5),
-    ("warehouse", 1.5),
-    ("outdoor", 1.0),
-    ("late night", 1.0),
-]
-
 
 def _load_artists_csv() -> list[tuple[str, float]]:
     """Load artists from bandcamp_artists.csv where weight > 0."""
@@ -81,10 +65,6 @@ def main():
         entries.append(TasteEntry(category="artist", name=name, weight=weight, source="manual"))
     for name, weight in venues:
         entries.append(TasteEntry(category="venue", name=name, weight=weight, source="manual"))
-    for name, weight in GENRES:
-        entries.append(TasteEntry(category="genre", name=name, weight=weight, source="manual"))
-    for name, weight in VIBES:
-        entries.append(TasteEntry(category="vibe", name=name, weight=weight, source="manual"))
 
     for entry in entries:
         db.upsert_taste_entry(entry)

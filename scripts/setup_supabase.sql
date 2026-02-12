@@ -60,7 +60,7 @@ create index if not exists idx_events_venue on events(venue_name);
 -- 3. Taste profile
 create table if not exists taste_profile (
     id uuid primary key default uuid_generate_v4(),
-    category text not null,   -- artist, venue, promoter, genre, vibe
+    category text not null,   -- artist, venue
     name text not null,
     weight real default 1.0,
     source text default 'manual',  -- manual, learned

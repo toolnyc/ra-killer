@@ -73,7 +73,7 @@ class Recommendation(BaseModel):
 
 class TasteEntry(BaseModel):
     id: str | None = None
-    category: str  # artist, venue, promoter, genre, vibe
+    category: str  # artist, venue
     name: str
     weight: float = 1.0
     source: str = "manual"  # manual | learned

@@ -29,15 +29,6 @@ class TasteProfile:
     def venue_weight(self, name: str) -> float:
         return self._by_category.get("venue", {}).get(normalize_venue(name), 0.0)
 
-    def genre_weight(self, name: str) -> float:
-        return self._by_category.get("genre", {}).get(normalize(name), 0.0)
-
-    def promoter_weight(self, name: str) -> float:
-        return self._by_category.get("promoter", {}).get(normalize(name), 0.0)
-
-    def vibe_weight(self, name: str) -> float:
-        return self._by_category.get("vibe", {}).get(normalize(name), 0.0)
-
     def known_artists(self) -> dict[str, float]:
         return self._by_category.get("artist", {})
 
@@ -47,7 +38,7 @@ class TasteProfile:
     def to_prompt_text(self) -> str:
         """Render taste profile as text for Claude prompt."""
         lines = []
-        for category in ("artist", "venue", "genre", "promoter", "vibe"):
+        for category in ("artist", "venue"):
             items = self._by_category.get(category, {})
             if not items:
                 continue

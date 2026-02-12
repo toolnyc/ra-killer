@@ -78,7 +78,7 @@ async def cmd_taste(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         by_cat.setdefault(e.category, []).append(e)
 
     lines = []
-    for cat in ("artist", "venue", "genre", "promoter", "vibe"):
+    for cat in ("artist", "venue"):
         items = by_cat.get(cat, [])
         if items:
             lines.append(f"\n<b>{cat.title()}s:</b>")

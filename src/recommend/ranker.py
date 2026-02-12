@@ -65,6 +65,7 @@ async def rank_events(
 
     # Merge heuristic + Claude scores (weighted average)
     heuristic_map = {e.id: s for e, s in scored_events}
+    max_h = max(heuristic_map.values(), default=1)
     final_scores: list[dict] = []
 
     for cs in claude_scores:
@@ -73,7 +74,7 @@ async def rank_events(
         heuristic = heuristic_map.get(eid, 0)
 
         # Weighted: 70% Claude, 30% heuristic (normalized to 0-100)
-        h_normalized = min(100, heuristic * 2)  # rough normalization
+        h_normalized = min(100, (heuristic / max_h) * 100) if max_h > 0 else 0
         combined = claude_score * 0.7 + h_normalized * 0.3
 
         final_scores.append(
