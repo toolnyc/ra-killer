@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import functools
-from datetime import date
+from datetime import date, timedelta
 from typing import Callable
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -59,6 +59,7 @@ def _register_handlers(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(handle_feedback))
 
 
+@_command_error_handler
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Welcome to ra-killer! NYC event recommendations.\n\n"
@@ -155,6 +156,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
+@_command_error_handler
 async def cmd_train(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Score past events for taste training with Going/Pass feedback."""
     top_n = 10
@@ -339,8 +341,6 @@ async def send_weekend_preview() -> None:
     days_until_friday = (4 - today.weekday()) % 7
     if days_until_friday == 0:
         days_until_friday = 7
-
-    from datetime import timedelta
 
     friday = today + timedelta(days=days_until_friday)
     sunday = friday + timedelta(days=2)

@@ -285,16 +285,26 @@ def get_recent_recommendations(limit: int = 50) -> list[dict]:
 def get_week_recommendations() -> list[dict]:
     """Get recommendations for events this week (for Twilio IVR)."""
     today = date.today()
+    week_end = today + timedelta(days=7)
     result = (
         get_client()
         .table("recommendations")
         .select("*, events(*)")
-        .gte("events.event_date", today.isoformat())
         .order("score", desc=True)
-        .limit(20)
+        .limit(100)
         .execute()
     )
-    return [r for r in result.data if r.get("events")]
+    # Filter in Python — PostgREST embedded resource filters (events.event_date)
+    # don't work as WHERE clauses on the join.
+    recs = []
+    for r in result.data:
+        ev = r.get("events")
+        if not ev:
+            continue
+        ev_date = ev.get("event_date", "")
+        if today.isoformat() <= ev_date <= week_end.isoformat():
+            recs.append(r)
+    return recs[:20]
 
 
 # --- Scrape logs ---

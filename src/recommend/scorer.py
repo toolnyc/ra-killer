@@ -140,7 +140,7 @@ Rules:
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+            model=settings.claude_model,
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )

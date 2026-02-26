@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # App
     base_url: str = "http://localhost:8000"
     log_level: str = "INFO"
+    claude_model: str = "claude-sonnet-4-5-20250929"
 
 
 settings = Settings()

@@ -1,6 +1,7 @@
 [Unit]
 Description=ra-killer NYC Event Aggregator
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple

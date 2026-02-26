@@ -7,8 +7,11 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+from src.log import get_logger
 from src.models import ScrapedEvent, Source
 from src.scrapers.base import BaseScraper
+
+logger = get_logger("lightandsound")
 
 BASE_URL = "https://lightandsound.design"
 
@@ -159,7 +162,7 @@ class LightAndSoundScraper(BaseScraper):
                 break  # Found event JSON-LD, done
 
         except Exception:
-            pass  # Failed to enrich, use stub data
+            logger.warning("enrich_failed", source_id=stub.source_id, url=stub.source_url)
 
         return stub
 

@@ -23,14 +23,18 @@ async def lifespan(app: FastAPI):
     logger.info("scheduler_started")
 
     # Start Telegram polling in background
+    tg_app = None
     if settings.telegram_bot_token:
-        tg_app = get_app()
-        await tg_app.initialize()
-        await tg_app.start()
-        await tg_app.updater.start_polling()
-        logger.info("telegram_polling_started")
+        try:
+            tg_app = get_app()
+            await tg_app.initialize()
+            await tg_app.start()
+            await tg_app.updater.start_polling()
+            logger.info("telegram_polling_started")
+        except Exception:
+            logger.exception("telegram_startup_failed")
+            tg_app = None
     else:
-        tg_app = None
         logger.warning("telegram_not_configured")
 
     yield

@@ -44,6 +44,7 @@ async def job_weekend_preview() -> None:
         logger.info("job_weekend_preview_done")
     except Exception as e:
         logger.error("job_weekend_preview_failed", error=str(e))
+        await send_alert("scheduler", f"Weekend preview failed: {e}")
 
 
 async def job_cleanup() -> None:
@@ -55,6 +56,7 @@ async def job_cleanup() -> None:
         logger.info("job_cleanup_done", deleted=count)
     except Exception as e:
         logger.error("job_cleanup_failed", error=str(e))
+        await send_alert("scheduler", f"Cleanup failed: {e}")
 
 
 def create_scheduler() -> AsyncIOScheduler:
