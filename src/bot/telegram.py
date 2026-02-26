@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import functools
 from datetime import date
+from typing import Callable
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -17,6 +19,23 @@ from src.models import Event, Recommendation, TasteEntry
 from src.recommend.ranker import run_recommendation_pipeline, run_training_pipeline
 
 logger = get_logger("telegram")
+
+
+def _command_error_handler(func: Callable) -> Callable:
+    """Decorator that catches exceptions in command handlers, logs them, and replies."""
+
+    @functools.wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            return await func(update, context)
+        except Exception:
+            logger.exception("command_error", command=func.__name__)
+            if update.message:
+                await update.message.reply_text(
+                    "Something went wrong. Please try again later."
+                )
+
+    return wrapper
 
 _app: Application | None = None
 
@@ -53,6 +72,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+@_command_error_handler
 async def cmd_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     events = db.get_upcoming_events()
     if not events:
@@ -65,6 +85,7 @@ async def cmd_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
+@_command_error_handler
 async def cmd_taste(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     entries = db.get_taste_profile()
     if not entries:
@@ -89,6 +110,7 @@ async def cmd_taste(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
+@_command_error_handler
 async def cmd_add_artist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         await update.message.reply_text("Usage: /add_artist Honey Dijon")
@@ -98,6 +120,7 @@ async def cmd_add_artist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(f"Added artist: {name}")
 
 
+@_command_error_handler
 async def cmd_add_venue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         await update.message.reply_text("Usage: /add_venue Nowadays")
@@ -107,6 +130,7 @@ async def cmd_add_venue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(f"Added venue: {name}")
 
 
+@_command_error_handler
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Recent scrape logs
     result = (

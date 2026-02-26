@@ -8,6 +8,7 @@ from thefuzz import fuzz
 from src import db
 from src.log import get_logger
 from src.models import Event, ScrapedEvent
+from src.notify.alerts import send_alert
 from src.normalize import normalize, normalize_artist_list, normalize_venue
 from src.scrapers.basement import BasementScraper
 from src.scrapers.dice import DICEScraper
@@ -140,7 +141,10 @@ def merge_into_canonical(scraped: ScrapedEvent, existing: Event | None) -> Event
 async def run_all_scrapers() -> dict[str, list[ScrapedEvent]]:
     """Run all scrapers concurrently. Returns {source_name: events}."""
     scrapers = [cls() for cls in ALL_SCRAPERS]
-    results = await asyncio.gather(*(s.run() for s in scrapers), return_exceptions=True)
+    results = await asyncio.gather(
+        *(asyncio.wait_for(s.run(), timeout=120) for s in scrapers),
+        return_exceptions=True,
+    )
 
     all_events: dict[str, list[ScrapedEvent]] = {}
     for scraper_cls, result in zip(ALL_SCRAPERS, results):
@@ -148,6 +152,7 @@ async def run_all_scrapers() -> dict[str, list[ScrapedEvent]]:
         if isinstance(result, Exception):
             logger.error("scraper_exception", source=name, error=str(result))
             db.log_scrape(name, "error", 0, 0, str(result))
+            await send_alert(name, f"Scraper failed: {result}")
             continue
 
         events, duration, error = result

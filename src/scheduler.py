@@ -59,7 +59,11 @@ async def job_cleanup() -> None:
 
 def create_scheduler() -> AsyncIOScheduler:
     """Create and configure the APScheduler."""
-    scheduler = AsyncIOScheduler()
+    scheduler = AsyncIOScheduler(job_defaults={
+        'misfire_grace_time': 300,  # 5 min grace for missed windows
+        'coalesce': True,           # collapse queued runs into one
+        'max_instances': 1,         # never run same job concurrently
+    })
 
     # Scrape at 6 AM and 6 PM ET
     scheduler.add_job(job_scrape, "cron", hour="6,18", minute=0, timezone="America/New_York")
