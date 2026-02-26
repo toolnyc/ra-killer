@@ -1,6 +1,6 @@
 # ra-killer TODO
 
-*Last updated: 2026-02-12*
+*Last updated: 2026-02-26*
 
 ## Completed
 
@@ -15,6 +15,7 @@
 - [x] Training pipeline (`/train N`) operational with 494+ past events
 - [x] Historical RA backfill script (`scripts/backfill_ra.py`)
 - [x] 78 tests passing
+- [x] Hardening pass: per-scraper 120s timeout, scraper failure alerts, Telegram command error handling, scheduler misfire/coalesce/max_instances
 
 ## Up Next
 
@@ -127,7 +128,7 @@ sudo systemctl start ra-killer
 ### Post-Deploy
 
 - [ ] Run several `/train` rounds via Telegram to calibrate taste weights
-- [ ] Hardening pass: request timeouts on all scrapers, scraper failure isolation, Telegram error messages, scheduler recovery from transient failures
+- [x] Hardening pass: request timeouts on all scrapers, scraper failure isolation, Telegram error messages, scheduler recovery from transient failures
 - [ ] Twilio IVR smoke test (call the number, verify voice flow end-to-end)
 
 ### Future Improvements (deferred)
