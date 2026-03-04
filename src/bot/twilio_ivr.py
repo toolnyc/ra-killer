@@ -27,13 +27,14 @@ async def voice_entry(request: Request) -> Response:
         timeout=5,
     )
     gather.say(
-        "Welcome to ra killer, your NYC event hotline. "
-        "Press 1 to hear this week's top picks. "
-        "Press 2 to hear all recommended events.",
-        voice="Polly.Matthew",
+        "You've reached Clubstack. We are New York's only dancefloor hotline. "
+        "We motivate you to shake that ass. "
+        "Press 1 to find a dancefloor, press 2 to hear the dancefloor.",
+        voice="Polly.Emma-Neural",
+        language="en-GB",
     )
     resp.append(gather)
-    resp.say("No input received. Goodbye.", voice="Polly.Matthew")
+    resp.say("No input received. Goodbye.", voice="Polly.Emma-Neural", language="en-GB")
     return Response(content=str(resp), media_type="application/xml")
 
 
@@ -48,9 +49,9 @@ async def gather_handler(request: Request) -> Response:
     if digit in ("1", "2"):
         limit = 5 if digit == "1" else 20
         script = _get_events_script(limit)
-        resp.say(script, voice="Polly.Matthew")
+        resp.say(script, voice="Polly.Emma-Neural", language="en-GB")
     else:
-        resp.say("Invalid input. Goodbye.", voice="Polly.Matthew")
+        resp.say("Invalid input. Goodbye.", voice="Polly.Emma-Neural", language="en-GB")
 
     resp.hangup()
     return Response(content=str(resp), media_type="application/xml")
