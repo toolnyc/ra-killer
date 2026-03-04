@@ -85,9 +85,24 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @_command_error_handler
 async def cmd_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    week_cutoff = date.today() + timedelta(days=7)
+
     # Try taste-ranked recommendations first
     recs = db.get_week_recommendations()
-    events_map = {e.id: e for e in db.get_upcoming_events()}
+
+    if not recs:
+        # No recs in DB — run the pipeline on-demand
+        status_msg = await update.message.reply_text("Scoring upcoming events...")
+        pipeline_recs = await run_recommendation_pipeline(top_n=10)
+        recs = db.get_week_recommendations() if pipeline_recs else []
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
+    # Build map of upcoming events within 7-day window
+    all_events = db.get_upcoming_events()
+    events_map = {e.id: e for e in all_events if e.event_date <= week_cutoff}
 
     sent = 0
     for r in recs:
@@ -104,12 +119,11 @@ async def cmd_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(
             text, parse_mode="HTML", reply_markup=keyboard, disable_web_page_preview=True
         )
-        db.update_recommendation_message_id(rec.id, None)  # no msg tracking needed here
         sent += 1
         if sent >= 10:
             break
 
-    # Fill remaining slots with unscored upcoming events
+    # Fill remaining slots with unscored events (still within 7 days)
     if sent < 10:
         for event in list(events_map.values())[:10 - sent]:
             text = _format_event(event)
