@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src import db
-from src.bot.telegram import send_daily_recommendations, send_weekend_preview
+from src.bot.telegram import send_daily_recommendations, send_weekend_preview, send_weekly_script_draft
 from src.log import get_logger
 from src.notify.alerts import send_alert
 from src.scrapers.runner import run_scrape_pipeline
@@ -47,6 +47,17 @@ async def job_weekend_preview() -> None:
         await send_alert("scheduler", f"Weekend preview failed: {e}")
 
 
+async def job_weekly_script() -> None:
+    """Generate weekly IVR script draft (Wednesday 10 AM)."""
+    logger.info("job_weekly_script_start")
+    try:
+        await send_weekly_script_draft()
+        logger.info("job_weekly_script_done")
+    except Exception as e:
+        logger.error("job_weekly_script_failed", error=str(e))
+        await send_alert("scheduler", f"Weekly script generation failed: {e}")
+
+
 async def job_cleanup() -> None:
     """Delete past events (midnight)."""
     logger.info("job_cleanup_start")
@@ -76,6 +87,11 @@ def create_scheduler() -> AsyncIOScheduler:
     # Weekend preview: Tuesday at 9 PM ET
     scheduler.add_job(
         job_weekend_preview, "cron", day_of_week="tue", hour=21, minute=0, timezone="America/New_York"
+    )
+
+    # Weekly script draft: Wednesday at 10 AM ET
+    scheduler.add_job(
+        job_weekly_script, "cron", day_of_week="wed", hour=10, minute=0, timezone="America/New_York"
     )
 
     # Cleanup at midnight ET

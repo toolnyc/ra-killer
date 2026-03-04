@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date, time, timedelta
+
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 from twilio.twiml.voice_response import Gather, VoiceResponse
@@ -55,7 +57,15 @@ async def gather_handler(request: Request) -> Response:
 
 
 def _get_events_script(limit: int) -> str:
-    """Build TTS script from this week's recommendations."""
+    """Build TTS script from approved weekly script or auto-generated fallback."""
+    # Check for an approved curated script first
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())  # Monday
+    approved = db.get_latest_approved_script(week_start)
+    if approved and approved.script_text:
+        return approved.script_text
+
+    # Fall back to auto-generated script
     recs_data = db.get_week_recommendations()
 
     if not recs_data:
@@ -66,9 +76,6 @@ def _get_events_script(limit: int) -> str:
         ev_data = r.get("events", {})
         if not ev_data:
             continue
-
-        # Parse event from joined data
-        from datetime import date, time
 
         event = Event(
             id=ev_data.get("id"),

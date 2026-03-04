@@ -10,13 +10,16 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 from src import db
 from src.config import settings
 from src.log import get_logger
-from src.models import Event, Recommendation, TasteEntry
+from src.models import Event, Recommendation, TasteEntry, WeeklyScript
 from src.recommend.ranker import run_recommendation_pipeline, run_training_pipeline
+from src.recommend.script_writer import apply_script_edits, generate_weekly_script
 
 logger = get_logger("telegram")
 
@@ -56,7 +59,9 @@ def _register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("add_venue", cmd_add_venue))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("train", cmd_train))
+    app.add_handler(CommandHandler("script", cmd_script))
     app.add_handler(CallbackQueryHandler(handle_feedback))
+    app.add_handler(MessageHandler(filters.REPLY & ~filters.COMMAND, handle_reply))
 
 
 @_command_error_handler
@@ -69,6 +74,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/add_artist <name> - Add a favorite artist\n"
         "/add_venue <name> - Add a favorite venue\n"
         "/train [N] - Score N past events for taste training\n"
+        "/script - Generate/view weekly IVR script\n"
         "/status - System status"
     )
 
@@ -197,15 +203,42 @@ async def cmd_train(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle inline keyboard feedback (Going/Pass)."""
+    """Handle inline keyboard feedback (Going/Pass and script approve/regen)."""
     query = update.callback_query
 
-    data = query.data  # format: "approve:rec_id" or "reject:rec_id"
+    data = query.data
     if ":" not in data:
         await query.answer()
         return
 
-    action, rec_id = data.split(":", 1)
+    action, target_id = data.split(":", 1)
+
+    # --- Script callbacks ---
+    if action == "script_approve":
+        await query.answer("Approved!")
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        try:
+            db.approve_weekly_script(target_id)
+            await query.message.reply_text("Script approved! It's now live on the IVR hotline.")
+        except Exception:
+            logger.exception("script_approve_failed", script_id=target_id)
+            await query.message.reply_text("Failed to approve script.")
+        return
+
+    if action == "script_regen":
+        await query.answer("Regenerating...")
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await send_weekly_script_draft(chat_id=query.message.chat_id)
+        return
+
+    # --- Recommendation feedback ---
+    rec_id = target_id
     if action not in ("approve", "reject"):
         await query.answer()
         return
@@ -293,6 +326,119 @@ def _format_recommendation(rec: Recommendation, event: Event) -> tuple[str, Inli
     )
 
     return text, keyboard
+
+
+@_command_error_handler
+async def cmd_script(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generate a weekly IVR script draft, or show the current approved one."""
+    if context.args and context.args[0].lower() == "current":
+        from src.recommend.script_writer import _monday_of_week
+
+        week_start = _monday_of_week(date.today())
+        script = db.get_latest_approved_script(week_start)
+        if script:
+            await update.message.reply_text(
+                f"<b>Approved script (week of {script.week_start}):</b>\n\n{script.script_text}",
+                parse_mode="HTML",
+            )
+        else:
+            await update.message.reply_text("No approved script for this week. Use /script to generate one.")
+        return
+
+    status_msg = await update.message.reply_text("Generating weekly script draft...")
+    await send_weekly_script_draft(chat_id=update.message.chat_id, status_msg=status_msg)
+
+
+async def send_weekly_script_draft(chat_id: str | int | None = None, status_msg=None) -> None:
+    """Generate a draft script and send it to Telegram with Approve/Regenerate buttons."""
+    if chat_id is None:
+        chat_id = settings.telegram_chat_id
+    if not settings.telegram_bot_token or not chat_id:
+        logger.warning("telegram_not_configured")
+        return
+
+    script = await generate_weekly_script()
+    script_id = db.save_weekly_script(script)
+    script.id = script_id
+
+    app = get_app()
+    bot = app.bot
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Approve", callback_data=f"script_approve:{script_id}"),
+                InlineKeyboardButton("Regenerate", callback_data=f"script_regen:{script_id}"),
+            ]
+        ]
+    )
+
+    text = f"<b>Weekly Script Draft</b> (week of {script.week_start})\n\n{script.script_text}"
+    # Telegram message limit is 4096 chars
+    if len(text) > 4096:
+        text = text[:4090] + "..."
+
+    msg = await bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
+
+    db.update_weekly_script_message_id(script_id, msg.message_id)
+
+    if status_msg:
+        try:
+            await status_msg.edit_text("Draft generated! Review below and reply to edit, or tap Approve.")
+        except Exception:
+            pass
+
+    logger.info("weekly_script_draft_sent", script_id=script_id)
+
+
+async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle replies to draft script messages — apply edits via Claude."""
+    if not update.message or not update.message.reply_to_message:
+        return
+
+    reply_to_id = update.message.reply_to_message.message_id
+    script = db.get_draft_script_by_message_id(reply_to_id)
+    if not script:
+        return  # Not a reply to a script draft
+
+    instructions = update.message.text
+    if not instructions:
+        return
+
+    status_msg = await update.message.reply_text("Applying edits...")
+
+    try:
+        new_text = await apply_script_edits(script.script_text, instructions)
+        db.update_weekly_script_text(script.id, new_text)
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("Approve", callback_data=f"script_approve:{script.id}"),
+                    InlineKeyboardButton("Regenerate", callback_data=f"script_regen:{script.id}"),
+                ]
+            ]
+        )
+
+        text = f"<b>Updated Script Draft</b>\n\n{new_text}"
+        if len(text) > 4096:
+            text = text[:4090] + "..."
+
+        msg = await update.message.chat.send_message(
+            text=text,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+        db.update_weekly_script_message_id(script.id, msg.message_id)
+        await status_msg.edit_text("Edits applied! Review the updated draft above.")
+    except Exception:
+        logger.exception("script_edit_failed")
+        await status_msg.edit_text("Failed to apply edits. Try again.")
 
 
 async def send_daily_recommendations(top_n: int = 10) -> None:

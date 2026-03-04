@@ -71,6 +71,17 @@ class Recommendation(BaseModel):
     created_at: datetime | None = None
 
 
+class WeeklyScript(BaseModel):
+    id: str | None = None
+    week_start: date  # Monday anchor
+    status: str = "draft"  # draft | approved | superseded
+    script_text: str = ""
+    source_event_ids: list[str] = Field(default_factory=list)
+    telegram_message_id: int | None = None
+    created_at: datetime | None = None
+    approved_at: datetime | None = None
+
+
 class TasteEntry(BaseModel):
     id: str | None = None
     category: str  # artist, venue

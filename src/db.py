@@ -6,7 +6,7 @@ from datetime import date, datetime, time, timedelta
 from supabase import create_client
 
 from src.config import settings
-from src.models import Event, Recommendation, ScrapedEvent, TasteEntry
+from src.models import Event, Recommendation, ScrapedEvent, TasteEntry, WeeklyScript
 from src.normalize import normalize_artist, normalize_venue
 
 _client = None
@@ -305,6 +305,114 @@ def get_week_recommendations() -> list[dict]:
         if today.isoformat() <= ev_date <= week_end.isoformat():
             recs.append(r)
     return recs[:20]
+
+
+# --- Weekly scripts ---
+
+
+def save_weekly_script(script: WeeklyScript) -> str:
+    """Insert a draft weekly script. Returns the script id."""
+    row = {
+        "week_start": script.week_start.isoformat(),
+        "status": script.status,
+        "script_text": script.script_text,
+        "source_event_ids": script.source_event_ids,
+    }
+    result = get_client().table("weekly_scripts").insert(row).execute()
+    return result.data[0]["id"]
+
+
+def get_latest_approved_script(week_start: date) -> WeeklyScript | None:
+    """Get the approved script for a given week (by Monday anchor)."""
+    result = (
+        get_client()
+        .table("weekly_scripts")
+        .select("*")
+        .eq("week_start", week_start.isoformat())
+        .eq("status", "approved")
+        .order("approved_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        return None
+    row = result.data[0]
+    row["week_start"] = _parse_date(row.get("week_start"))
+    return WeeklyScript(**row)
+
+
+def get_draft_script_by_message_id(message_id: int) -> WeeklyScript | None:
+    """Find a draft script by its Telegram message ID (for reply detection)."""
+    result = (
+        get_client()
+        .table("weekly_scripts")
+        .select("*")
+        .eq("telegram_message_id", message_id)
+        .eq("status", "draft")
+        .execute()
+    )
+    if not result.data:
+        return None
+    row = result.data[0]
+    row["week_start"] = _parse_date(row.get("week_start"))
+    return WeeklyScript(**row)
+
+
+def approve_weekly_script(script_id: str) -> None:
+    """Mark a script as approved and supersede any previous approved scripts for the same week."""
+    # Get the script to find its week_start
+    result = (
+        get_client()
+        .table("weekly_scripts")
+        .select("*")
+        .eq("id", script_id)
+        .execute()
+    )
+    if not result.data:
+        return
+
+    week_start = result.data[0]["week_start"]
+
+    # Supersede existing approved scripts for this week
+    (
+        get_client()
+        .table("weekly_scripts")
+        .update({"status": "superseded"})
+        .eq("week_start", week_start)
+        .eq("status", "approved")
+        .execute()
+    )
+
+    # Approve this one
+    (
+        get_client()
+        .table("weekly_scripts")
+        .update({"status": "approved", "approved_at": datetime.utcnow().isoformat()})
+        .eq("id", script_id)
+        .execute()
+    )
+
+
+def update_weekly_script_text(script_id: str, new_text: str) -> None:
+    """Update the script text (for edits via Telegram reply)."""
+    (
+        get_client()
+        .table("weekly_scripts")
+        .update({"script_text": new_text})
+        .eq("id", script_id)
+        .execute()
+    )
+
+
+def update_weekly_script_message_id(script_id: str, message_id: int) -> None:
+    """Link a weekly script to its Telegram message."""
+    (
+        get_client()
+        .table("weekly_scripts")
+        .update({"telegram_message_id": message_id})
+        .eq("id", script_id)
+        .execute()
+    )
 
 
 # --- Scrape logs ---
