@@ -85,12 +85,7 @@ async def generate_weekly_script(
         return WeeklyScript(
             week_start=week_start,
             status="draft",
-            script_text=(
-                "Hey, you've reached Clubstack. "
-                "No recommendations this week — "
-                "but keep checking back, we'll have fresh picks soon. "
-                "In the meantime, get out there and find your own dancefloor. Peace."
-            ),
+            script_text="No recommendations this week.",
             source_event_ids=[],
         )
 

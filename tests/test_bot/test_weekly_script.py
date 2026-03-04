@@ -132,7 +132,7 @@ def test_ivr_falls_back_to_placeholder(mock_db):
     mock_db.get_published_script.return_value = None
 
     result = _get_published_script()
-    assert "no script" in result.lower()
+    assert "no recommendations" in result.lower()
 
 
 # --- Approve supersedes old scripts ---

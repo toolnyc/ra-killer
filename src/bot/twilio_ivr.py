@@ -62,7 +62,4 @@ def _get_published_script() -> str:
     if published and published.script_text:
         return published.script_text
 
-    return (
-        "There's no script for this week yet. "
-        "Check back soon for the latest dancefloor picks."
-    )
+    return "No recommendations this week. Call back next week."

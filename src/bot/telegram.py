@@ -60,6 +60,7 @@ def _register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("train", cmd_train))
     app.add_handler(CommandHandler("script", cmd_script))
+    app.add_handler(CommandHandler("write", cmd_write))
     app.add_handler(CommandHandler("push", cmd_push))
     app.add_handler(CallbackQueryHandler(handle_feedback))
     app.add_handler(MessageHandler(filters.REPLY & ~filters.COMMAND, handle_reply))
@@ -76,6 +77,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/add_venue <name> - Add a favorite venue\n"
         "/train [N] - Score N past events for taste training\n"
         "/script - Generate/view weekly IVR script\n"
+        "/write <text> - Hand-write an IVR script\n"
         "/push - Push approved script to the hotline\n"
         "/status - System status"
     )
@@ -83,15 +85,39 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @_command_error_handler
 async def cmd_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    events = db.get_upcoming_events()
-    if not events:
-        await update.message.reply_text("No upcoming events found.")
-        return
+    # Try taste-ranked recommendations first
+    recs = db.get_week_recommendations()
+    events_map = {e.id: e for e in db.get_upcoming_events()}
 
-    # Show top 10 by date
-    for event in events[:10]:
-        text = _format_event(event)
-        await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
+    sent = 0
+    for r in recs:
+        event = events_map.pop(r.get("event_id"), None)
+        if not event:
+            continue
+        rec = Recommendation(
+            id=r["id"],
+            event_id=r["event_id"],
+            score=r.get("score", 0),
+            reasoning=r.get("reasoning", ""),
+        )
+        text, keyboard = _format_recommendation(rec, event)
+        await update.message.reply_text(
+            text, parse_mode="HTML", reply_markup=keyboard, disable_web_page_preview=True
+        )
+        db.update_recommendation_message_id(rec.id, None)  # no msg tracking needed here
+        sent += 1
+        if sent >= 10:
+            break
+
+    # Fill remaining slots with unscored upcoming events
+    if sent < 10:
+        for event in list(events_map.values())[:10 - sent]:
+            text = _format_event(event)
+            await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
+            sent += 1
+
+    if sent == 0:
+        await update.message.reply_text("No upcoming events found.")
 
 
 @_command_error_handler
@@ -362,6 +388,44 @@ async def cmd_script(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     status_msg = await update.message.reply_text("Generating weekly script draft...")
     await send_weekly_script_draft(chat_id=update.message.chat_id, status_msg=status_msg)
+
+
+@_command_error_handler
+async def cmd_write(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Hand-write an IVR script and save as draft."""
+    from src.recommend.script_writer import _monday_of_week
+
+    if not context.args:
+        await update.message.reply_text("Usage: /write Hey, you've reached Clubstack...")
+        return
+
+    script_text = " ".join(context.args)
+    week_start = _monday_of_week(date.today())
+    script = WeeklyScript(
+        week_start=week_start,
+        status="draft",
+        script_text=script_text,
+        source_event_ids=[],
+    )
+    script_id = db.save_weekly_script(script)
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Approve", callback_data=f"script_approve:{script_id}"),
+                InlineKeyboardButton("Regenerate", callback_data=f"script_regen:{script_id}"),
+            ]
+        ]
+    )
+
+    text = f"<b>Manual Script Draft</b> (week of {week_start})\n\n{script_text}"
+    if len(text) > 4096:
+        text = text[:4090] + "..."
+
+    msg = await update.message.reply_text(
+        text, parse_mode="HTML", reply_markup=keyboard
+    )
+    db.update_weekly_script_message_id(script_id, msg.message_id)
 
 
 @_command_error_handler
