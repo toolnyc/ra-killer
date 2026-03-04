@@ -87,26 +87,27 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     week_cutoff = date.today() + timedelta(days=7)
 
-    # Try taste-ranked recommendations first
+    # Fetch or generate taste-ranked recommendations
     recs = db.get_week_recommendations()
 
     if not recs:
-        # No recs in DB — run the pipeline on-demand
         status_msg = await update.message.reply_text("Scoring upcoming events...")
-        pipeline_recs = await run_recommendation_pipeline(top_n=10)
-        recs = db.get_week_recommendations() if pipeline_recs else []
+        await run_recommendation_pipeline(top_n=10)
+        recs = db.get_week_recommendations()
         try:
             await status_msg.delete()
         except Exception:
             pass
 
-    # Build map of upcoming events within 7-day window
-    all_events = db.get_upcoming_events()
-    events_map = {e.id: e for e in all_events if e.event_date <= week_cutoff}
+    if not recs:
+        await update.message.reply_text("No recommendations yet. Try again after a scrape runs.")
+        return
+
+    events_map = {e.id: e for e in db.get_upcoming_events() if e.event_date <= week_cutoff}
 
     sent = 0
     for r in recs:
-        event = events_map.pop(r.get("event_id"), None)
+        event = events_map.get(r.get("event_id"))
         if not event:
             continue
         rec = Recommendation(
@@ -115,20 +116,25 @@ async def cmd_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             score=r.get("score", 0),
             reasoning=r.get("reasoning", ""),
         )
-        text, keyboard = _format_recommendation(rec, event)
+        text = _format_event(event)
+        text += f"\n\nScore: {rec.score:.0f}/100"
+        if rec.reasoning:
+            text += f"\n{rec.reasoning}"
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("Add to Script", callback_data=f"curate_add:{rec.id}"),
+                    InlineKeyboardButton("Skip", callback_data=f"curate_skip:{rec.id}"),
+                ]
+            ]
+        )
         await update.message.reply_text(
             text, parse_mode="HTML", reply_markup=keyboard, disable_web_page_preview=True
         )
         sent += 1
         if sent >= 10:
             break
-
-    # Fill remaining slots with unscored events (still within 7 days)
-    if sent < 10:
-        for event in list(events_map.values())[:10 - sent]:
-            text = _format_event(event)
-            await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
-            sent += 1
 
     if sent == 0:
         await update.message.reply_text("No upcoming events found.")
@@ -287,7 +293,27 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await send_weekly_script_draft(chat_id=query.message.chat_id)
         return
 
-    # --- Recommendation feedback ---
+    # --- Curation feedback (from /upcoming) ---
+    if action in ("curate_add", "curate_skip"):
+        rec_id = target_id
+        feedback = "approve" if action == "curate_add" else "reject"
+        label = "Added to script" if action == "curate_add" else "Skipped"
+
+        await query.answer(label)
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+        try:
+            db.update_recommendation_feedback(rec_id, feedback)
+        except Exception:
+            logger.exception("curation_failed", rec_id=rec_id, action=action)
+
+        await query.message.reply_text(label)
+        return
+
+    # --- Training feedback (from /train) ---
     rec_id = target_id
     if action not in ("approve", "reject"):
         await query.answer()
@@ -297,21 +323,19 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     rec_data = db.get_recommendation_by_message_id(query.message.message_id)
     if rec_data and rec_data.get("feedback"):
         await query.answer("Already recorded!")
-        # Ensure buttons are removed even on duplicate
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
-            pass  # Already removed by the first callback
+            pass
         return
 
     label = "Going!" if action == "approve" else "Pass"
 
-    # Remove buttons immediately to prevent double-clicks
     await query.answer(label)
     try:
         await query.edit_message_reply_markup(reply_markup=None)
     except Exception:
-        pass  # Race: another callback already removed it
+        pass
 
     # Persist feedback and update taste weights
     try:

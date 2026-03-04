@@ -92,21 +92,19 @@ async def generate_weekly_script(
     going_block = _build_event_block(going, "Confirmed Going")
     recs_block = _build_event_block(top_recs, "Top Recommendations")
 
-    prompt = f"""You are the host of "Clubstack" — a weekly NYC nightlife hotline. Write a voicemail script (~600-800 words) that someone would hear when they call in.
-
-Tone: opinionated, knowledgeable, like a friend who knows the scene. Not a robot reading a list — you're giving real recommendations with personality. Think late-night radio DJ who actually goes to these parties.
+    prompt = f"""You are the host of "Clubstack" — a weekly NYC nightlife hotline. Write a short voicemail script for callers.
 
 {going_block}
 
 {recs_block}
 
 Guidelines:
-- Open with a short punchy intro (what kind of week it is for nightlife)
-- Group events by night (Thursday, Friday, Saturday, Sunday)
-- For "Confirmed Going" events, be extra enthusiastic — the listener already said yes
-- For recommendations, give a quick sell (why this one matters)
-- End with a sign-off
-- Keep it natural for text-to-speech (no weird punctuation, spell out abbreviations)
+- One-line intro, then get to the events
+- For each event: who's playing, where, when, how much. One or two sentences max.
+- Group by night (Thursday, Friday, Saturday, Sunday)
+- Short sign-off
+- Keep it natural for text-to-speech (spell out abbreviations, no weird punctuation)
+- Aim for 200-300 words total
 - Write ONLY the script text, no stage directions or metadata"""
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
