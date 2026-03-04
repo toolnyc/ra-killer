@@ -13,7 +13,7 @@ jobs:
         with:
           host: 89.167.49.1
           username: deploy
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          key: ${{ secrets.RA_HETZNER_RSA }}
           script: |
             cd /opt/ra-killer
             git pull origin main
