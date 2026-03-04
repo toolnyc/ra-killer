@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import date, timedelta
 
 from thefuzz import fuzz
 
@@ -139,7 +139,11 @@ def merge_into_canonical(scraped: ScrapedEvent, existing: Event | None) -> Event
 
 
 async def run_all_scrapers() -> dict[str, list[ScrapedEvent]]:
-    """Run all scrapers concurrently. Returns {source_name: events}."""
+    """Run all scrapers concurrently. Returns {source_name: events}.
+
+    Events beyond 14 days out are filtered to keep the DB focused.
+    """
+    max_date = date.today() + timedelta(days=14)
     scrapers = [cls() for cls in ALL_SCRAPERS]
     results = await asyncio.gather(
         *(asyncio.wait_for(s.run(), timeout=120) for s in scrapers),
@@ -160,7 +164,9 @@ async def run_all_scrapers() -> dict[str, list[ScrapedEvent]]:
         db.log_scrape(name, status, len(events), duration, error)
 
         if events:
-            all_events[name] = events
+            filtered = [e for e in events if e.event_date <= max_date]
+            if filtered:
+                all_events[name] = filtered
 
     return all_events
 

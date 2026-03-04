@@ -59,12 +59,21 @@ async def job_weekly_script() -> None:
 
 
 async def job_cleanup() -> None:
-    """Delete past events (midnight)."""
+    """Delete past events and old data (midnight)."""
     logger.info("job_cleanup_start")
     try:
         yesterday = date.today() - timedelta(days=1)
-        count = db.delete_past_events(yesterday)
-        logger.info("job_cleanup_done", deleted=count)
+        events_deleted = db.delete_past_events(yesterday)
+        raw_deleted = db.delete_old_raw_events(days=7)
+        recs_deleted = db.delete_old_recommendations(days=30)
+        logs_deleted = db.delete_old_logs(days=30)
+        logger.info(
+            "job_cleanup_done",
+            events_deleted=events_deleted,
+            raw_deleted=raw_deleted,
+            recs_deleted=recs_deleted,
+            logs_deleted=logs_deleted,
+        )
     except Exception as e:
         logger.error("job_cleanup_failed", error=str(e))
         await send_alert("scheduler", f"Cleanup failed: {e}")

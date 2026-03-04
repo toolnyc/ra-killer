@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, time, timedelta
 
 from src.models import ScrapedEvent, Source
 from src.scrapers.base import BaseScraper
@@ -45,11 +45,12 @@ class RAScraper(BaseScraper):
         events: list[ScrapedEvent] = []
         page = 1
         listing_from = (from_date or date.today()).isoformat()
+        listing_to = (date.today() + timedelta(days=14)).isoformat()
         while True:
             variables = {
                 "filters": {
                     "areas": {"eq": AREA_ID},
-                    "listingDate": {"gte": listing_from},
+                    "listingDate": {"gte": listing_from, "lte": listing_to},
                 },
                 "pageSize": 100,
                 "page": page,

@@ -475,3 +475,49 @@ def delete_past_events(before_date: date) -> int:
         .execute()
     )
     return len(result.data)
+
+
+def delete_old_raw_events(days: int = 7) -> int:
+    """Delete raw_events with event_date older than N days ago."""
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    result = (
+        get_client()
+        .table("raw_events")
+        .delete()
+        .lt("event_date", cutoff)
+        .execute()
+    )
+    return len(result.data)
+
+
+def delete_old_recommendations(days: int = 30) -> int:
+    """Delete recommendations older than N days."""
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    result = (
+        get_client()
+        .table("recommendations")
+        .delete()
+        .lt("created_at", cutoff)
+        .execute()
+    )
+    return len(result.data)
+
+
+def delete_old_logs(days: int = 30) -> int:
+    """Delete old scrape_logs and alert_log entries. Returns total deleted."""
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    r1 = (
+        get_client()
+        .table("scrape_logs")
+        .delete()
+        .lt("created_at", cutoff)
+        .execute()
+    )
+    r2 = (
+        get_client()
+        .table("alert_log")
+        .delete()
+        .lt("created_at", cutoff)
+        .execute()
+    )
+    return len(r1.data) + len(r2.data)
