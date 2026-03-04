@@ -1,0 +1,3 @@
+api.clubstack.net {
+	reverse_proxy localhost:8000
+}

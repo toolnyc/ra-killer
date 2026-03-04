@@ -132,10 +132,20 @@ async def run_training_pipeline(
 
 
 async def run_recommendation_pipeline(top_n: int = 10) -> list[Recommendation]:
-    """Full pipeline: load events, load taste, rank, save recommendations."""
+    """Full pipeline: load events, load taste, rank, save recommendations.
+
+    Skips events that already have recommendations so daily runs accumulate
+    rather than duplicate scores for the same events.
+    """
     events = db.get_upcoming_events()
     if not events:
         logger.warning("no_events", msg="No upcoming events to rank")
+        return []
+
+    already = db.get_recommended_event_ids()
+    events = [e for e in events if e.id not in already]
+    if not events:
+        logger.info("all_upcoming_events_already_recommended")
         return []
 
     taste = TasteProfile()

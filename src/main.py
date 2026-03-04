@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
     logger.info("shutdown_complete")
 
 
-app = FastAPI(title="ra-killer", lifespan=lifespan)
+app = FastAPI(title="clubstack", lifespan=lifespan)
 app.include_router(twilio_router)
 
 

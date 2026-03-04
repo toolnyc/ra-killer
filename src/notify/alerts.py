@@ -19,7 +19,7 @@ async def send_alert(source: str, message: str) -> None:
         logger.debug("alert_rate_limited", source=source)
         return
 
-    text = f"[ra-killer alert] {source}: {message}"
+    text = f"[clubstack alert] {source}: {message}"
 
     try:
         async with httpx.AsyncClient() as client:

@@ -18,15 +18,15 @@ def _monday_of_week(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
-def _gather_events_for_script() -> tuple[list[Event], list[Event]]:
+def _gather_events_for_script() -> tuple[list[tuple[Event, str]], list[tuple[Event, str]]]:
     """Gather "Going" events and top-scored recs for this week.
 
-    Returns (going_events, top_rec_events).
+    Returns (going_events, top_rec_events) where each item is (Event, reasoning).
     """
     recs = db.get_week_recommendations()
 
-    going = []
-    top_recs = []
+    going: list[tuple[Event, str]] = []
+    top_recs: list[tuple[Event, str]] = []
 
     events_map = {e.id: e for e in db.get_upcoming_events()}
 
@@ -34,35 +34,42 @@ def _gather_events_for_script() -> tuple[list[Event], list[Event]]:
         ev = events_map.get(r.get("event_id"))
         if not ev:
             continue
+        reasoning = r.get("reasoning", "")
         if r.get("feedback") == "approve":
-            going.append(ev)
+            going.append((ev, reasoning))
         elif r.get("score", 0) >= 50:
-            top_recs.append(ev)
+            top_recs.append((ev, reasoning))
 
     return going, top_recs[:10]
 
 
-def _build_event_block(events: list[Event], label: str) -> str:
-    """Format events into a text block for the Claude prompt."""
+def _build_event_block(events: list[tuple[Event, str]], label: str) -> str:
+    """Format events into a text block for the Claude prompt.
+
+    Each item is (Event, reasoning_text).
+    """
     if not events:
         return f"## {label}\nNone this week.\n"
 
     lines = [f"## {label}"]
-    for e in events:
+    for e, reasoning in events:
         artists = ", ".join(e.artists) if e.artists else "TBA"
         day = e.event_date.strftime("%A %b %d")
         time_str = e.start_time.strftime("%I:%M %p").lstrip("0") if e.start_time else ""
         venue = e.venue_name or "TBA"
         lines.append(f"- {e.title} | {artists} | {venue} | {day} {time_str}")
+        if reasoning:
+            lines.append(f"  Why: {reasoning}")
     return "\n".join(lines)
 
 
 async def generate_weekly_script(
-    going: list[Event] | None = None,
-    top_recs: list[Event] | None = None,
+    going: list[tuple[Event, str]] | None = None,
+    top_recs: list[tuple[Event, str]] | None = None,
 ) -> WeeklyScript:
     """Generate a DJ-style weekly script from going events + top recs.
 
+    Each item is (Event, reasoning_text).
     If going/top_recs are not provided, gathers them from the DB.
     Returns a WeeklyScript (draft, not yet saved).
     """
@@ -70,12 +77,12 @@ async def generate_weekly_script(
         going, top_recs = _gather_events_for_script()
 
     all_events = going + top_recs
-    source_ids = [e.id for e in all_events if e.id]
+    source_ids = [e.id for e, _ in all_events if e.id]
 
     going_block = _build_event_block(going, "Confirmed Going")
     recs_block = _build_event_block(top_recs, "Top Recommendations")
 
-    prompt = f"""You are the host of "RA Killer" — a weekly NYC nightlife hotline. Write a voicemail script (~600-800 words) that someone would hear when they call in.
+    prompt = f"""You are the host of "Clubstack" — a weekly NYC nightlife hotline. Write a voicemail script (~600-800 words) that someone would hear when they call in.
 
 Tone: opinionated, knowledgeable, like a friend who knows the scene. Not a robot reading a list — you're giving real recommendations with personality. Think late-night radio DJ who actually goes to these parties.
 

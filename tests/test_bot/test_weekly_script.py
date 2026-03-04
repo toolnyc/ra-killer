@@ -48,8 +48,8 @@ async def test_generate_script_with_going_events(mock_anthropic):
         content=[MagicMock(text="Yo NYC, it's gonna be a wild weekend...")]
     )
 
-    going = [_make_event(id="ev1", title="Going Event")]
-    top_recs = [_make_event(id="ev2", title="Rec Event")]
+    going = [(_make_event(id="ev1", title="Going Event"), "Great lineup")]
+    top_recs = [(_make_event(id="ev2", title="Rec Event"), "Emerging artist")]
 
     script = await generate_weekly_script(going=going, top_recs=top_recs)
 
@@ -78,7 +78,7 @@ async def test_generate_script_no_going_events(mock_anthropic):
         content=[MagicMock(text="Not much confirmed this week but check these out...")]
     )
 
-    script = await generate_weekly_script(going=[], top_recs=[_make_event()])
+    script = await generate_weekly_script(going=[], top_recs=[(_make_event(), "Worth checking out")])
 
     assert script.status == "draft"
     assert "Not much confirmed" in script.script_text
@@ -114,29 +114,25 @@ async def test_apply_script_edits(mock_anthropic):
 
 @patch("src.bot.twilio_ivr.db")
 def test_ivr_uses_approved_script(mock_db):
-    from src.bot.twilio_ivr import _get_events_script
+    from src.bot.twilio_ivr import _get_approved_script
 
     mock_db.get_latest_approved_script.return_value = _make_script(
         status="approved",
-        script_text="This week on RA Killer, we've got fire...",
+        script_text="This week on Clubstack, we've got fire...",
     )
 
-    result = _get_events_script(5)
+    result = _get_approved_script()
     assert "fire" in result
-    # Should NOT call get_week_recommendations since approved script exists
-    mock_db.get_week_recommendations.assert_not_called()
 
 
 @patch("src.bot.twilio_ivr.db")
-def test_ivr_falls_back_to_auto_generated(mock_db):
-    from src.bot.twilio_ivr import _get_events_script
+def test_ivr_falls_back_to_placeholder(mock_db):
+    from src.bot.twilio_ivr import _get_approved_script
 
     mock_db.get_latest_approved_script.return_value = None
-    mock_db.get_week_recommendations.return_value = []
 
-    result = _get_events_script(5)
-    assert "No recommended events" in result
-    mock_db.get_week_recommendations.assert_called_once()
+    result = _get_approved_script()
+    assert "no approved script" in result.lower()
 
 
 # --- Approve supersedes old scripts ---

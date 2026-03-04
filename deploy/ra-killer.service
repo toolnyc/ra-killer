@@ -8,8 +8,10 @@ Type=simple
 User=deploy
 WorkingDirectory=/opt/ra-killer
 ExecStart=/opt/ra-killer/.venv/bin/python -m src.main
-Restart=always
+Restart=on-failure
 RestartSec=10
+StartLimitIntervalSec=60
+StartLimitBurst=3
 EnvironmentFile=/opt/ra-killer/.env
 
 # Logging

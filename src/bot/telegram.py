@@ -67,7 +67,7 @@ def _register_handlers(app: Application) -> None:
 @_command_error_handler
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "Welcome to ra-killer! NYC event recommendations.\n\n"
+        "Welcome to Clubstack! NYC event recommendations.\n\n"
         "Commands:\n"
         "/upcoming - Top upcoming events\n"
         "/taste - View your taste profile\n"
