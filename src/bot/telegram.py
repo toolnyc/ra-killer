@@ -60,6 +60,7 @@ def _register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("train", cmd_train))
     app.add_handler(CommandHandler("script", cmd_script))
+    app.add_handler(CommandHandler("push", cmd_push))
     app.add_handler(CallbackQueryHandler(handle_feedback))
     app.add_handler(MessageHandler(filters.REPLY & ~filters.COMMAND, handle_reply))
 
@@ -75,6 +76,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/add_venue <name> - Add a favorite venue\n"
         "/train [N] - Score N past events for taste training\n"
         "/script - Generate/view weekly IVR script\n"
+        "/push - Push approved script to the hotline\n"
         "/status - System status"
     )
 
@@ -105,14 +107,20 @@ async def cmd_taste(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     for e in entries:
         by_cat.setdefault(e.category, []).append(e)
 
+    max_per_cat = 20
     lines = []
-    for cat in ("artist", "venue"):
+    for cat in ("artist", "venue", "genre", "vibe"):
         items = by_cat.get(cat, [])
         if items:
+            sorted_items = sorted(items, key=lambda x: -x.weight)
+            shown = sorted_items[:max_per_cat]
+            remaining = len(sorted_items) - len(shown)
             lines.append(f"\n<b>{cat.title()}s:</b>")
-            for item in sorted(items, key=lambda x: -x.weight):
+            for item in shown:
                 sign = "+" if item.weight > 0 else ""
                 lines.append(f"  {item.name} ({sign}{item.weight:.1f})")
+            if remaining > 0:
+                lines.append(f"  <i>...and {remaining} more</i>")
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
@@ -222,7 +230,9 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             pass
         try:
             db.approve_weekly_script(target_id)
-            await query.message.reply_text("Script approved! It's now live on the IVR hotline.")
+            await query.message.reply_text(
+                "Script approved! Use /push to make it live on the hotline."
+            )
         except Exception:
             logger.exception("script_approve_failed", script_id=target_id)
             await query.message.reply_text("Failed to approve script.")
@@ -335,18 +345,43 @@ async def cmd_script(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         from src.recommend.script_writer import _monday_of_week
 
         week_start = _monday_of_week(date.today())
-        script = db.get_latest_approved_script(week_start)
+        # Show published (live) script first, fall back to approved
+        script = db.get_published_script(week_start)
+        label = "Live"
+        if not script:
+            script = db.get_latest_approved_script(week_start)
+            label = "Approved (not yet pushed)"
         if script:
             await update.message.reply_text(
-                f"<b>Approved script (week of {script.week_start}):</b>\n\n{script.script_text}",
+                f"<b>{label} script (week of {script.week_start}):</b>\n\n{script.script_text}",
                 parse_mode="HTML",
             )
         else:
-            await update.message.reply_text("No approved script for this week. Use /script to generate one.")
+            await update.message.reply_text("No script for this week. Use /script to generate one.")
         return
 
     status_msg = await update.message.reply_text("Generating weekly script draft...")
     await send_weekly_script_draft(chat_id=update.message.chat_id, status_msg=status_msg)
+
+
+@_command_error_handler
+async def cmd_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Push the approved script to the IVR hotline (make it live)."""
+    from src.recommend.script_writer import _monday_of_week
+
+    week_start = _monday_of_week(date.today())
+    script = db.get_latest_approved_script(week_start)
+    if not script:
+        await update.message.reply_text(
+            "No approved script to push. Generate and approve one first with /script."
+        )
+        return
+
+    db.publish_weekly_script(script.id)
+    await update.message.reply_text(
+        f"Script pushed! It's now live on the hotline (week of {script.week_start})."
+    )
+    logger.info("script_pushed_to_ivr", script_id=script.id, week_start=str(script.week_start))
 
 
 async def send_weekly_script_draft(chat_id: str | int | None = None, status_msg=None) -> None:

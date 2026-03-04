@@ -113,26 +113,26 @@ async def test_apply_script_edits(mock_anthropic):
 
 
 @patch("src.bot.twilio_ivr.db")
-def test_ivr_uses_approved_script(mock_db):
-    from src.bot.twilio_ivr import _get_approved_script
+def test_ivr_uses_published_script(mock_db):
+    from src.bot.twilio_ivr import _get_published_script
 
-    mock_db.get_latest_approved_script.return_value = _make_script(
-        status="approved",
+    mock_db.get_published_script.return_value = _make_script(
+        status="published",
         script_text="This week on Clubstack, we've got fire...",
     )
 
-    result = _get_approved_script()
+    result = _get_published_script()
     assert "fire" in result
 
 
 @patch("src.bot.twilio_ivr.db")
 def test_ivr_falls_back_to_placeholder(mock_db):
-    from src.bot.twilio_ivr import _get_approved_script
+    from src.bot.twilio_ivr import _get_published_script
 
-    mock_db.get_latest_approved_script.return_value = None
+    mock_db.get_published_script.return_value = None
 
-    result = _get_approved_script()
-    assert "no approved script" in result.lower()
+    result = _get_published_script()
+    assert "no script" in result.lower()
 
 
 # --- Approve supersedes old scripts ---

@@ -79,6 +79,21 @@ async def generate_weekly_script(
     all_events = going + top_recs
     source_ids = [e.id for e, _ in all_events if e.id]
 
+    # No events at all — return a short "nothing this week" script
+    if not all_events:
+        week_start = _monday_of_week(date.today())
+        return WeeklyScript(
+            week_start=week_start,
+            status="draft",
+            script_text=(
+                "Hey, you've reached Clubstack. "
+                "No recommendations this week — "
+                "but keep checking back, we'll have fresh picks soon. "
+                "In the meantime, get out there and find your own dancefloor. Peace."
+            ),
+            source_event_ids=[],
+        )
+
     going_block = _build_event_block(going, "Confirmed Going")
     recs_block = _build_event_block(top_recs, "Top Recommendations")
 

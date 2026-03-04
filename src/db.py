@@ -323,7 +323,7 @@ def save_weekly_script(script: WeeklyScript) -> str:
 
 
 def get_latest_approved_script(week_start: date) -> WeeklyScript | None:
-    """Get the approved script for a given week (by Monday anchor)."""
+    """Get the latest approved (not yet published) script for a given week."""
     result = (
         get_client()
         .table("weekly_scripts")
@@ -339,6 +339,59 @@ def get_latest_approved_script(week_start: date) -> WeeklyScript | None:
     row = result.data[0]
     row["week_start"] = _parse_date(row.get("week_start"))
     return WeeklyScript(**row)
+
+
+def get_published_script(week_start: date) -> WeeklyScript | None:
+    """Get the published (live on IVR) script for a given week."""
+    result = (
+        get_client()
+        .table("weekly_scripts")
+        .select("*")
+        .eq("week_start", week_start.isoformat())
+        .eq("status", "published")
+        .order("approved_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        return None
+    row = result.data[0]
+    row["week_start"] = _parse_date(row.get("week_start"))
+    return WeeklyScript(**row)
+
+
+def publish_weekly_script(script_id: str) -> None:
+    """Mark an approved script as published (live on IVR)."""
+    result = (
+        get_client()
+        .table("weekly_scripts")
+        .select("*")
+        .eq("id", script_id)
+        .execute()
+    )
+    if not result.data:
+        return
+
+    week_start = result.data[0]["week_start"]
+
+    # Supersede any previously published scripts for this week
+    (
+        get_client()
+        .table("weekly_scripts")
+        .update({"status": "superseded"})
+        .eq("week_start", week_start)
+        .eq("status", "published")
+        .execute()
+    )
+
+    # Publish this one
+    (
+        get_client()
+        .table("weekly_scripts")
+        .update({"status": "published"})
+        .eq("id", script_id)
+        .execute()
+    )
 
 
 def get_draft_script_by_message_id(message_id: int) -> WeeklyScript | None:

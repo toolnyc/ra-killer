@@ -45,7 +45,7 @@ async def gather_handler(request: Request) -> Response:
     resp = VoiceResponse()
 
     if digit in ("1", "2"):
-        script = _get_approved_script()
+        script = _get_published_script()
         resp.say(script, voice="Polly.Emma-Neural", language="en-GB")
     else:
         resp.say("Invalid input. Goodbye.", voice="Polly.Emma-Neural", language="en-GB")
@@ -54,15 +54,15 @@ async def gather_handler(request: Request) -> Response:
     return Response(content=str(resp), media_type="application/xml")
 
 
-def _get_approved_script() -> str:
-    """Return the approved weekly script, or a placeholder if none exists."""
+def _get_published_script() -> str:
+    """Return the published weekly script, or a placeholder if none exists."""
     today = date.today()
     week_start = today - timedelta(days=today.weekday())  # Monday
-    approved = db.get_latest_approved_script(week_start)
-    if approved and approved.script_text:
-        return approved.script_text
+    published = db.get_published_script(week_start)
+    if published and published.script_text:
+        return published.script_text
 
     return (
-        "There's no approved script for this week yet. "
+        "There's no script for this week yet. "
         "Check back soon for the latest dancefloor picks."
     )

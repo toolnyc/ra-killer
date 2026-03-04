@@ -74,7 +74,7 @@ class Recommendation(BaseModel):
 class WeeklyScript(BaseModel):
     id: str | None = None
     week_start: date  # Monday anchor
-    status: str = "draft"  # draft | approved | superseded
+    status: str = "draft"  # draft | approved | published | superseded
     script_text: str = ""
     source_event_ids: list[str] = Field(default_factory=list)
     telegram_message_id: int | None = None
