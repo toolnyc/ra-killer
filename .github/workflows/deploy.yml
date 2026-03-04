@@ -1,0 +1,23 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 89.167.49.1
+          username: deploy
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /opt/ra-killer
+            git pull origin main
+            ~/.local/bin/uv sync --frozen
+            sudo systemctl restart ra-killer
+            sleep 2
+            systemctl is-active --quiet ra-killer && echo "Deploy OK" || (journalctl -u ra-killer -n 20 --no-pager && exit 1)
