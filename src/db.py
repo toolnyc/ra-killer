@@ -630,10 +630,10 @@ def get_party_voice_note() -> dict | None:
             .table("party_voice_note")
             .select("*")
             .eq("id", 1)
-            .maybeSingle()
             .execute()
         )
-        return result.data if result.data else None
+        rows = result.data
+        return rows[0] if rows else None
     except Exception as e:
         error_msg = str(e).lower()
         if "could not find" in error_msg or "relation" in error_msg:
