@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 
 import httpx
 from fastapi import APIRouter, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response
 from twilio.twiml.voice_response import Gather, VoiceResponse
 
 from src import db
@@ -73,16 +74,27 @@ def _get_published_script() -> str:
 
 @router.get("/party_audio")
 async def party_audio(request: Request) -> Response:
-    """Proxy the party voice note audio to Twilio from Supabase storage."""
+    """Proxy and transcode party voice note to MP3 for Twilio compatibility."""
     try:
         voice_note = db.get_party_voice_note()
         storage_url = voice_note["media_url"] if voice_note else db.get_party_voice_storage_url()
         async with httpx.AsyncClient() as client:
             upstream = await client.get(storage_url, timeout=10.0)
             upstream.raise_for_status()
+        ogg_data = upstream.content
+
+        # Transcode OGG/Opus → MP3 via ffmpeg (Twilio reliably plays MP3 on PSTN)
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-i", "pipe:0", "-f", "mp3", "-ab", "64k", "pipe:1",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        mp3_data, _ = await asyncio.wait_for(proc.communicate(input=ogg_data), timeout=15.0)
+
         return Response(
-            content=upstream.content,
-            media_type="audio/ogg; codecs=opus",
+            content=mp3_data,
+            media_type="audio/mpeg",
             headers={"Cache-Control": "no-cache"},
         )
     except Exception:
