@@ -539,8 +539,8 @@ async def cmd_set_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Party voice note updated! Callers pressing 3 will now hear this recording."
         )
         logger.info("party_voice_updated", updated_by=username)
-    except Exception:
-        logger.exception("set_party_voice_failed")
+    except Exception as exc:
+        logger.exception("set_party_voice_failed", error=str(exc))
         await update.message.reply_text(
             "Failed to upload voice note. Please try again or contact admin."
         )
