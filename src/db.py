@@ -578,6 +578,9 @@ def delete_old_logs(days: int = 30) -> int:
 
 # --- Party voice note ---
 
+PARTY_VOICE_BUCKET = "party-voice-notes"
+PARTY_VOICE_FILENAME = "party_voice_note.ogg"
+
 
 def upsert_party_voice_note(media_url: str, updated_by: str | None = None) -> None:
     """Set or update the active party voice note."""
@@ -607,7 +610,31 @@ def delete_party_voice_note() -> None:
     get_client().table("party_voice_note").delete().eq("id", 1).execute()
 
 
-async def upload_to_supabase_storage(file_data: bytes, filename: str) -> str:
+def get_party_voice_storage_url(filename: str = PARTY_VOICE_FILENAME) -> str:
+    """Get the public URL for the canonical party voice note file."""
+    return get_client().storage.from_(PARTY_VOICE_BUCKET).get_public_url(filename)
+
+
+def _is_missing_bucket_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "bucket not found" in message or "the resource was not found" in message
+
+
+def _is_bucket_exists_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "already exists" in message or "duplicate" in message
+
+
+def party_voice_exists_in_storage(filename: str = PARTY_VOICE_FILENAME) -> bool:
+    """Return whether the canonical party voice note file exists in storage."""
+    files = get_client().storage.from_(PARTY_VOICE_BUCKET).list(
+        "",
+        {"search": filename, "limit": 1},
+    )
+    return any(f.get("name") == filename for f in files)
+
+
+async def upload_to_supabase_storage(file_data: bytes, filename: str = PARTY_VOICE_FILENAME) -> str:
     """Upload audio file to Supabase Storage and return public URL.
     
     Args:
@@ -618,25 +645,49 @@ async def upload_to_supabase_storage(file_data: bytes, filename: str) -> str:
         Public HTTPS URL to the uploaded file
     """
     import asyncio
-    from functools import partial
-    
-    bucket = "party-voice-notes"
-    path = f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{filename}"
+    bucket = PARTY_VOICE_BUCKET
+    path = filename
     
     # Upload file in thread pool to avoid blocking the event loop
     # (Supabase storage API calls are synchronous)
     def _upload() -> str:
-        get_client().storage.from_(bucket).upload(
-            path=path,
-            file=file_data,
-            file_options={"content-type": "audio/ogg"}
-        )
-        # Get public URL
-        public_url = get_client().storage.from_(bucket).get_public_url(path)
-        return public_url
-    
+        storage = get_client().storage
+        try:
+            storage.from_(bucket).upload(
+                path=path,
+                file=file_data,
+                file_options={"content-type": "audio/ogg", "upsert": "true"},
+            )
+        except Exception as exc:
+            if not _is_missing_bucket_error(exc):
+                raise
+            try:
+                storage.create_bucket(bucket, options={"public": True})
+            except Exception as create_exc:
+                if not _is_bucket_exists_error(create_exc):
+                    raise
+            storage.from_(bucket).upload(
+                path=path,
+                file=file_data,
+                file_options={"content-type": "audio/ogg", "upsert": "true"},
+            )
+        return storage.from_(bucket).get_public_url(path)
+
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _upload)
+
+
+async def delete_party_voice_from_storage(filename: str = PARTY_VOICE_FILENAME) -> None:
+    """Delete the canonical party voice note from Supabase Storage if present."""
+    import asyncio
+
+    def _delete() -> None:
+        if not party_voice_exists_in_storage(filename):
+            return
+        get_client().storage.from_(PARTY_VOICE_BUCKET).remove([filename])
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _delete)
 
 
 async def download_from_supabase_storage(public_url: str) -> bytes:

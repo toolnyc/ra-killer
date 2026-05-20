@@ -492,16 +492,21 @@ async def cmd_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @_command_error_handler
 async def cmd_set_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Set/update the party voice note from a voice message."""
-    if not update.message.reply_to_message or not update.message.reply_to_message.voice:
+    reply_msg = update.message.reply_to_message
+    media = reply_msg.voice if reply_msg else None
+    if not media and reply_msg:
+        media = reply_msg.audio
+
+    if not reply_msg or not media:
         await update.message.reply_text(
-            "Reply to a voice message with /set_party_voice to set it as the party instructions."
+            "Reply to a voice or audio message with /set_party_voice to set party instructions."
         )
         return
 
     # Download voice from Telegram
     try:
         status_msg = await update.message.reply_text("Uploading voice note...")
-        file_info = await update.message.bot.get_file(update.message.reply_to_message.voice.file_id)
+        file_info = await update.message.bot.get_file(media.file_id)
         file_data = await file_info.download_as_bytearray()
 
         # Check file size (Twilio supports up to 5MB)
@@ -510,21 +515,25 @@ async def cmd_set_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         # Check duration (warn if > 30 seconds)
-        voice = update.message.reply_to_message.voice
-        if voice.duration and voice.duration > 60:
+        if media.duration and media.duration > 60:
             await status_msg.edit_text(
-                f"Voice note too long ({voice.duration}s). Please keep it under 60 seconds."
+                f"Voice note too long ({media.duration}s). Please keep it under 60 seconds."
             )
             return
 
         # Upload to Supabase Storage
-        media_url = await db.upload_to_supabase_storage(
-            file_data, "party_voice_note.ogg"
-        )
+        media_url = await db.upload_to_supabase_storage(file_data, db.PARTY_VOICE_FILENAME)
 
         # Update database
         username = update.message.from_user.username or str(update.message.from_user.id)
-        db.upsert_party_voice_note(media_url=media_url, updated_by=username)
+        try:
+            db.upsert_party_voice_note(media_url=media_url, updated_by=username)
+        except Exception:
+            logger.exception("party_voice_db_upsert_failed")
+            await status_msg.edit_text(
+                "Party voice uploaded, but metadata save failed. Playback should still work."
+            )
+            return
 
         await status_msg.edit_text(
             "Party voice note updated! Callers pressing 3 will now hear this recording."
@@ -540,15 +549,27 @@ async def cmd_set_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE
 @_command_error_handler
 async def cmd_clear_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Clear the party voice note."""
+    had_error = False
     try:
         db.delete_party_voice_note()
-        await update.message.reply_text(
-            "Party voice note cleared. Callers pressing 3 will now hear 'no instructions available'."
-        )
-        logger.info("party_voice_cleared")
     except Exception:
-        logger.exception("clear_party_voice_failed")
+        had_error = True
+        logger.exception("clear_party_voice_db_failed")
+
+    try:
+        await db.delete_party_voice_from_storage()
+    except Exception:
+        had_error = True
+        logger.exception("clear_party_voice_storage_failed")
+
+    if had_error:
         await update.message.reply_text("Failed to clear voice note.")
+        return
+
+    await update.message.reply_text(
+        "Party voice note cleared. Callers pressing 3 will now hear 'no instructions available'."
+    )
+    logger.info("party_voice_cleared")
 
 
 @_command_error_handler

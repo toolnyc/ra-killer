@@ -33,6 +33,18 @@ def _make_update_with_voice(reply_voice: bool = True, voice_duration: int = 30) 
     return update
 
 
+def _make_update_with_audio(audio_duration: int = 30) -> MagicMock:
+    """Build a mock Update replying to an audio message."""
+    update = _make_update_with_voice(reply_voice=False)
+    audio = MagicMock()
+    audio.file_id = "AUDIO123"
+    audio.duration = audio_duration
+    update.message.reply_to_message = MagicMock()
+    update.message.reply_to_message.voice = None
+    update.message.reply_to_message.audio = audio
+    return update
+
+
 @pytest.mark.asyncio
 @patch("src.bot.telegram.db")
 async def test_set_party_voice_success(mock_db: MagicMock) -> None:
@@ -65,6 +77,32 @@ async def test_set_party_voice_success(mock_db: MagicMock) -> None:
 
 @pytest.mark.asyncio
 @patch("src.bot.telegram.db")
+async def test_set_party_voice_accepts_audio_reply(mock_db: MagicMock) -> None:
+    """Replying to an audio message should also work."""
+    status_msg = AsyncMock()
+
+    mock_db.upload_to_supabase_storage = AsyncMock(
+        return_value="https://storage.example.com/audio.ogg"
+    )
+    mock_db.upsert_party_voice_note = MagicMock()
+    mock_db.PARTY_VOICE_FILENAME = "party_voice_note.ogg"
+
+    update = _make_update_with_audio(audio_duration=20)
+    update.message.reply_text = AsyncMock(return_value=status_msg)
+    update.message.bot.get_file = AsyncMock()
+    update.message.bot.get_file.return_value.download_as_bytearray = AsyncMock(
+        return_value=b"fake audio data"
+    )
+
+    context = MagicMock()
+    await cmd_set_party_voice(update, context)
+
+    mock_db.upload_to_supabase_storage.assert_called_once()
+    mock_db.upsert_party_voice_note.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch("src.bot.telegram.db")
 async def test_set_party_voice_no_reply(mock_db: MagicMock) -> None:
     """Calling without replying to a voice message should show error."""
     update = _make_update_with_voice(reply_voice=False)
@@ -74,7 +112,7 @@ async def test_set_party_voice_no_reply(mock_db: MagicMock) -> None:
 
     update.message.reply_text.assert_called_once()
     args = update.message.reply_text.call_args[0]
-    assert "Reply to a voice message" in args[0]
+    assert "Reply to a voice or audio message" in args[0]
 
 
 @pytest.mark.asyncio
@@ -147,6 +185,7 @@ async def test_set_party_voice_upload_error(mock_db: MagicMock) -> None:
 async def test_clear_party_voice_success(mock_db: MagicMock) -> None:
     """Clearing voice note should delete from database."""
     mock_db.delete_party_voice_note = MagicMock()
+    mock_db.delete_party_voice_from_storage = AsyncMock()
 
     update = MagicMock()
     update.message.reply_text = AsyncMock()
@@ -155,6 +194,7 @@ async def test_clear_party_voice_success(mock_db: MagicMock) -> None:
     await cmd_clear_party_voice(update, context)
 
     mock_db.delete_party_voice_note.assert_called_once()
+    mock_db.delete_party_voice_from_storage.assert_called_once()
     update.message.reply_text.assert_called_once()
     args = update.message.reply_text.call_args[0]
     assert "Party voice note cleared" in args[0]
@@ -165,6 +205,7 @@ async def test_clear_party_voice_success(mock_db: MagicMock) -> None:
 async def test_clear_party_voice_error(mock_db: MagicMock) -> None:
     """Database error should be caught."""
     mock_db.delete_party_voice_note.side_effect = Exception("DB error")
+    mock_db.delete_party_voice_from_storage = AsyncMock()
 
     update = MagicMock()
     update.message.reply_text = AsyncMock()
@@ -175,6 +216,34 @@ async def test_clear_party_voice_error(mock_db: MagicMock) -> None:
     update.message.reply_text.assert_called_once()
     args = update.message.reply_text.call_args[0]
     assert "Failed" in args[0]
+
+
+@pytest.mark.asyncio
+@patch("src.bot.telegram.db")
+async def test_set_party_voice_db_upsert_error_still_reports_upload(mock_db: MagicMock) -> None:
+    """If DB upsert fails, upload should still be reported as usable."""
+    status_msg = AsyncMock()
+
+    mock_db.upload_to_supabase_storage = AsyncMock(
+        return_value="https://storage.example.com/audio.ogg"
+    )
+    mock_db.upsert_party_voice_note = MagicMock(side_effect=Exception("relation missing"))
+    mock_db.PARTY_VOICE_FILENAME = "party_voice_note.ogg"
+
+    update = _make_update_with_voice(voice_duration=30)
+    update.message.reply_text = AsyncMock(return_value=status_msg)
+    update.message.bot.get_file = AsyncMock()
+    update.message.bot.get_file.return_value.download_as_bytearray = AsyncMock(
+        return_value=b"fake audio data"
+    )
+
+    context = MagicMock()
+
+    await cmd_set_party_voice(update, context)
+
+    status_msg.edit_text.assert_called_once_with(
+        "Party voice uploaded, but metadata save failed. Playback should still work."
+    )
 
 
 @pytest.mark.asyncio

@@ -72,22 +72,28 @@ def _get_published_script() -> str:
 @router.post("/party_instructions")
 async def party_instructions(request: Request) -> Response:
     """Play back party voice instructions, or fallback if none available."""
+    media_url = ""
     try:
         voice_note = db.get_party_voice_note()
-    except Exception as e:
+        if voice_note and voice_note.get("media_url"):
+            media_url = voice_note["media_url"]
+    except Exception:
         logger.exception("party_instructions_db_error")
-        resp = VoiceResponse()
-        resp.say("Service temporarily unavailable. Hanging up.", voice="Polly.Emma-Neural", language="en-GB")
-        resp.hangup()
-        return Response(content=str(resp), media_type="application/xml")
+
+    if not media_url:
+        try:
+            if db.party_voice_exists_in_storage():
+                media_url = db.get_party_voice_storage_url()
+        except Exception:
+            logger.exception("party_instructions_storage_lookup_error")
 
     resp = VoiceResponse()
 
-    if voice_note and voice_note.get("media_url"):
+    if media_url:
         try:
-            resp.play(voice_note["media_url"])
-        except Exception as e:
-            logger.exception("party_instructions_play_error", url=voice_note.get("media_url"))
+            resp.play(media_url)
+        except Exception:
+            logger.exception("party_instructions_play_error", url=media_url)
 
         resp.pause(length=1)
         resp.say(

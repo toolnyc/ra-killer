@@ -37,6 +37,7 @@ async def test_party_instructions_with_voice_note(mock_db: MagicMock) -> None:
 async def test_party_instructions_no_voice_note(mock_db: MagicMock) -> None:
     """With no voice note, should show fallback message and redirect."""
     mock_db.get_party_voice_note.return_value = None
+    mock_db.party_voice_exists_in_storage.return_value = False
 
     request = MagicMock()
     request.form = AsyncMock(return_value={})
@@ -59,6 +60,7 @@ async def test_party_instructions_empty_url(mock_db: MagicMock) -> None:
         "updated_at": "2025-05-20T12:00:00",
         "updated_by": "testuser",
     }
+    mock_db.party_voice_exists_in_storage.return_value = False
 
     request = MagicMock()
     request.form = AsyncMock(return_value={})
@@ -73,8 +75,9 @@ async def test_party_instructions_empty_url(mock_db: MagicMock) -> None:
 @pytest.mark.asyncio
 @patch("src.bot.twilio_ivr.db")
 async def test_party_instructions_db_error(mock_db: MagicMock) -> None:
-    """Database error should return unavailable message."""
+    """Database error should fall back to storage lookup."""
     mock_db.get_party_voice_note.side_effect = Exception("DB down")
+    mock_db.party_voice_exists_in_storage.return_value = False
 
     request = MagicMock()
     request.form = AsyncMock(return_value={})
@@ -83,7 +86,25 @@ async def test_party_instructions_db_error(mock_db: MagicMock) -> None:
     
     body = response.body if isinstance(response.body, str) else response.body.decode()
 
-    assert "Service temporarily unavailable" in body
+    assert "No party instructions available" in body
+
+
+@pytest.mark.asyncio
+@patch("src.bot.twilio_ivr.db")
+async def test_party_instructions_storage_fallback(mock_db: MagicMock) -> None:
+    """When DB has no record, storage fallback URL should be used."""
+    mock_db.get_party_voice_note.return_value = None
+    mock_db.party_voice_exists_in_storage.return_value = True
+    mock_db.get_party_voice_storage_url.return_value = "https://example.com/audio/fallback.ogg"
+
+    request = MagicMock()
+    request.form = AsyncMock(return_value={})
+
+    response = await party_instructions(request)
+
+    body = response.body if isinstance(response.body, str) else response.body.decode()
+
+    assert "<Play>https://example.com/audio/fallback.ogg</Play>" in body
 
 
 @pytest.mark.asyncio
