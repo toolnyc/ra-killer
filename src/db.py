@@ -643,6 +643,9 @@ async def upload_to_supabase_storage(file_data: bytes, filename: str = PARTY_VOI
     
     Returns:
         Public HTTPS URL to the uploaded file
+        
+    Raises:
+        Exception: If upload fails after all retry attempts
     """
     import asyncio
     bucket = PARTY_VOICE_BUCKET
@@ -652,26 +655,49 @@ async def upload_to_supabase_storage(file_data: bytes, filename: str = PARTY_VOI
     # (Supabase storage API calls are synchronous)
     def _upload() -> str:
         storage = get_client().storage
+        
+        # First attempt: try to upload directly
         try:
             storage.from_(bucket).upload(
                 path=path,
                 file=file_data,
                 file_options={"content-type": "audio/ogg", "upsert": "true"},
             )
+            logger.debug("party_voice_upload_success", bucket=bucket, path=path)
+            return storage.from_(bucket).get_public_url(path)
         except Exception as exc:
+            # If not a bucket error, fail immediately
             if not _is_missing_bucket_error(exc):
+                logger.exception("party_voice_upload_failed", bucket=bucket, path=path, error_type="upload_error")
                 raise
-            try:
-                storage.create_bucket(bucket, options={"public": True})
-            except Exception as create_exc:
-                if not _is_bucket_exists_error(create_exc):
-                    raise
+            
+            logger.info("party_voice_bucket_missing", bucket=bucket)
+        
+        # Second attempt: create bucket and retry upload
+        try:
+            logger.info("party_voice_creating_bucket", bucket=bucket)
+            storage.create_bucket(bucket, options={"public": True})
+            logger.info("party_voice_bucket_created", bucket=bucket)
+        except Exception as create_exc:
+            # If bucket already exists, that's fine - proceed to retry upload
+            if not _is_bucket_exists_error(create_exc):
+                logger.exception("party_voice_bucket_create_failed", bucket=bucket, error_type="create_error")
+                raise
+            logger.info("party_voice_bucket_already_exists", bucket=bucket)
+        
+        # Third attempt: retry upload after bucket handling
+        try:
+            logger.info("party_voice_upload_retry", bucket=bucket, path=path)
             storage.from_(bucket).upload(
                 path=path,
                 file=file_data,
                 file_options={"content-type": "audio/ogg", "upsert": "true"},
             )
-        return storage.from_(bucket).get_public_url(path)
+            logger.info("party_voice_upload_retry_success", bucket=bucket, path=path)
+            return storage.from_(bucket).get_public_url(path)
+        except Exception as retry_exc:
+            logger.exception("party_voice_upload_retry_failed", bucket=bucket, path=path, error_type="retry_upload_error")
+            raise
 
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _upload)
