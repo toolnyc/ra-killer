@@ -27,7 +27,8 @@ async def voice_entry(request: Request) -> Response:
     gather.say(
         "You've reached Clubstack. We are New York's only dancefloor hotline. "
         "We motivate you to shake that ass. "
-        "Press 1 to find a dancefloor, press 2 to hear the dancefloor.",
+        "Press 1 to find a dancefloor, press 2 to hear the dancefloor, "
+        "press 3 for information on a dangerous illicit techno party.",
         voice="Polly.Emma-Neural",
         language="en-GB",
     )
@@ -47,10 +48,13 @@ async def gather_handler(request: Request) -> Response:
     if digit in ("1", "2"):
         script = _get_published_script()
         resp.say(script, voice="Polly.Emma-Neural", language="en-GB")
+        resp.hangup()
+    elif digit == "3":
+        resp.redirect("/twilio/party_instructions")
     else:
         resp.say("Invalid input. Goodbye.", voice="Polly.Emma-Neural", language="en-GB")
+        resp.hangup()
 
-    resp.hangup()
     return Response(content=str(resp), media_type="application/xml")
 
 
@@ -63,3 +67,65 @@ def _get_published_script() -> str:
         return published.script_text
 
     return "No recommendations this week. Call back next week."
+
+
+@router.post("/party_instructions")
+async def party_instructions(request: Request) -> Response:
+    """Play back party voice instructions, or fallback if none available."""
+    try:
+        voice_note = db.get_party_voice_note()
+    except Exception as e:
+        logger.exception("party_instructions_db_error")
+        resp = VoiceResponse()
+        resp.say("Service temporarily unavailable. Hanging up.", voice="Polly.Emma-Neural", language="en-GB")
+        resp.hangup()
+        return Response(content=str(resp), media_type="application/xml")
+
+    resp = VoiceResponse()
+
+    if voice_note and voice_note.get("media_url"):
+        try:
+            resp.play(voice_note["media_url"])
+        except Exception as e:
+            logger.exception("party_instructions_play_error", url=voice_note.get("media_url"))
+
+        resp.pause(length=1)
+        resp.say(
+            "Press star to return to the main menu, or hang up.",
+            voice="Polly.Emma-Neural",
+            language="en-GB",
+        )
+        gather = Gather(
+            num_digits=1,
+            action="/twilio/party_nav",
+            method="POST",
+            timeout=5,
+        )
+        gather.pause(length=5)
+        resp.append(gather)
+        resp.hangup()
+    else:
+        resp.say(
+            "No party instructions available. Returning to main menu.",
+            voice="Polly.Emma-Neural",
+            language="en-GB",
+        )
+        resp.redirect("/twilio/gather")
+
+    return Response(content=str(resp), media_type="application/xml")
+
+
+@router.post("/party_nav")
+async def party_navigation(request: Request) -> Response:
+    """Handle navigation after party instructions playback."""
+    form = await request.form()
+    digits = form.get("Digits", "")
+
+    resp = VoiceResponse()
+
+    if digits == "*":
+        resp.redirect("/twilio/gather")
+    else:
+        resp.hangup()
+
+    return Response(content=str(resp), media_type="application/xml")

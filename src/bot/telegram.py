@@ -62,6 +62,9 @@ def _register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("script", cmd_script))
     app.add_handler(CommandHandler("write", cmd_write))
     app.add_handler(CommandHandler("push", cmd_push))
+    app.add_handler(CommandHandler("set_party_voice", cmd_set_party_voice))
+    app.add_handler(CommandHandler("clear_party_voice", cmd_clear_party_voice))
+    app.add_handler(CommandHandler("preview_party_voice", cmd_preview_party_voice))
     app.add_handler(CallbackQueryHandler(handle_feedback))
     app.add_handler(MessageHandler(filters.REPLY & ~filters.COMMAND, handle_reply))
 
@@ -484,6 +487,94 @@ async def cmd_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Script pushed! It's now live on the hotline (week of {script.week_start})."
     )
     logger.info("script_pushed_to_ivr", script_id=script.id, week_start=str(script.week_start))
+
+
+@_command_error_handler
+async def cmd_set_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Set/update the party voice note from a voice message."""
+    if not update.message.reply_to_message or not update.message.reply_to_message.voice:
+        await update.message.reply_text(
+            "Reply to a voice message with /set_party_voice to set it as the party instructions."
+        )
+        return
+
+    # Download voice from Telegram
+    try:
+        status_msg = await update.message.reply_text("Uploading voice note...")
+        file_info = await update.message.bot.get_file(update.message.reply_to_message.voice.file_id)
+        file_data = await file_info.download_as_bytearray()
+
+        # Check file size (Twilio supports up to 5MB)
+        if len(file_data) > 5 * 1024 * 1024:
+            await status_msg.edit_text("File too large. Please compress or re-record (max 5MB).")
+            return
+
+        # Check duration (warn if > 30 seconds)
+        voice = update.message.reply_to_message.voice
+        if voice.duration and voice.duration > 60:
+            await status_msg.edit_text(
+                f"Voice note too long ({voice.duration}s). Please keep it under 60 seconds."
+            )
+            return
+
+        # Upload to Supabase Storage
+        media_url = await db.upload_to_supabase_storage(
+            file_data, "party_voice_note.ogg"
+        )
+
+        # Update database
+        username = update.message.from_user.username or str(update.message.from_user.id)
+        db.upsert_party_voice_note(media_url=media_url, updated_by=username)
+
+        await status_msg.edit_text(
+            "Party voice note updated! Callers pressing 3 will now hear this recording."
+        )
+        logger.info("party_voice_updated", updated_by=username)
+    except Exception:
+        logger.exception("set_party_voice_failed")
+        await update.message.reply_text(
+            "Failed to upload voice note. Please try again or contact admin."
+        )
+
+
+@_command_error_handler
+async def cmd_clear_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear the party voice note."""
+    try:
+        db.delete_party_voice_note()
+        await update.message.reply_text(
+            "Party voice note cleared. Callers pressing 3 will now hear 'no instructions available'."
+        )
+        logger.info("party_voice_cleared")
+    except Exception:
+        logger.exception("clear_party_voice_failed")
+        await update.message.reply_text("Failed to clear voice note.")
+
+
+@_command_error_handler
+async def cmd_preview_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Preview the current party voice note."""
+    try:
+        voice_note = db.get_party_voice_note()
+
+        if not voice_note or not voice_note.get("media_url"):
+            await update.message.reply_text("No party voice note is currently set.")
+            return
+
+        # Download from storage and send to user
+        file_data = await db.download_from_supabase_storage(voice_note["media_url"])
+        updated_at = voice_note.get("updated_at", "unknown")
+        updated_by = voice_note.get("updated_by", "unknown")
+
+        caption = f"Current party voice note\n(updated {updated_at} by @{updated_by})"
+
+        await update.message.reply_voice(
+            voice=file_data,
+            caption=caption,
+        )
+    except Exception:
+        logger.exception("preview_party_voice_failed")
+        await update.message.reply_text("Failed to preview voice note.")
 
 
 async def send_weekly_script_draft(chat_id: str | int | None = None, status_msg=None) -> None:

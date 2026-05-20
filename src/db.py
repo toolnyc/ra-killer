@@ -574,3 +574,75 @@ def delete_old_logs(days: int = 30) -> int:
         .execute()
     )
     return len(r1.data) + len(r2.data)
+
+
+# --- Party voice note ---
+
+
+def upsert_party_voice_note(media_url: str, updated_by: str | None = None) -> None:
+    """Set or update the active party voice note."""
+    get_client().table("party_voice_note").upsert({
+        "id": 1,
+        "media_url": media_url,
+        "updated_by": updated_by,
+        "updated_at": datetime.utcnow().isoformat()
+    }).execute()
+
+
+def get_party_voice_note() -> dict | None:
+    """Get the current party voice note."""
+    result = (
+        get_client()
+        .table("party_voice_note")
+        .select("*")
+        .eq("id", 1)
+        .maybeSingle()
+        .execute()
+    )
+    return result.data if result.data else None
+
+
+def delete_party_voice_note() -> None:
+    """Remove the active party voice note."""
+    get_client().table("party_voice_note").delete().eq("id", 1).execute()
+
+
+async def upload_to_supabase_storage(file_data: bytes, filename: str) -> str:
+    """Upload audio file to Supabase Storage and return public URL.
+    
+    Args:
+        file_data: Binary audio file content
+        filename: Original filename (e.g., "party_voice_note.ogg")
+    
+    Returns:
+        Public HTTPS URL to the uploaded file
+    """
+    bucket = "party-voice-notes"
+    path = f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{filename}"
+    
+    # Upload file
+    get_client().storage.from_(bucket).upload(
+        path=path,
+        file=file_data,
+        file_options={"content-type": "audio/ogg"}
+    )
+    
+    # Get public URL
+    public_url = get_client().storage.from_(bucket).get_public_url(path)
+    return public_url
+
+
+async def download_from_supabase_storage(public_url: str) -> bytes:
+    """Download file from Supabase Storage public URL.
+    
+    Args:
+        public_url: Public HTTPS URL from Supabase Storage
+    
+    Returns:
+        Binary file content
+    """
+    import httpx
+    async with httpx.AsyncClient() as client:
+        response = await client.get(public_url)
+        response.raise_for_status()
+        return response.content
