@@ -6,7 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.bot.twilio_ivr import party_instructions, party_navigation
+from src.config import settings
 from src.models import WeeklyScript
+
+PROXY_URL = f"{settings.base_url}/twilio/party_audio"
 
 
 @pytest.mark.asyncio
@@ -27,7 +30,7 @@ async def test_party_instructions_with_voice_note(mock_db: MagicMock) -> None:
     
     body = response.body if isinstance(response.body, str) else response.body.decode()
 
-    assert "<Play>https://example.com/audio/test.ogg</Play>" in body
+    assert f"<Play>{PROXY_URL}</Play>" in body
     assert "Press star to return to the main menu" in body
     assert "<Gather" in body
 
@@ -104,7 +107,7 @@ async def test_party_instructions_storage_fallback(mock_db: MagicMock) -> None:
 
     body = response.body if isinstance(response.body, str) else response.body.decode()
 
-    assert "<Play>https://example.com/audio/fallback.ogg</Play>" in body
+    assert f"<Play>{PROXY_URL}</Play>" in body
 
 
 @pytest.mark.asyncio

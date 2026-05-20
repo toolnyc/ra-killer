@@ -58,12 +58,11 @@ async def test_set_party_voice_success(mock_db: MagicMock) -> None:
 
     update = _make_update_with_voice(voice_duration=30)
     update.message.reply_text = AsyncMock(return_value=status_msg)
-    update.message.bot.get_file = AsyncMock()
-    update.message.bot.get_file.return_value.download_as_bytearray = AsyncMock(
+    context = MagicMock()
+    context.bot.get_file = AsyncMock()
+    context.bot.get_file.return_value.download_as_bytearray = AsyncMock(
         return_value=b"fake audio data"
     )
-
-    context = MagicMock()
 
     await cmd_set_party_voice(update, context)
 
@@ -89,12 +88,11 @@ async def test_set_party_voice_accepts_audio_reply(mock_db: MagicMock) -> None:
 
     update = _make_update_with_audio(audio_duration=20)
     update.message.reply_text = AsyncMock(return_value=status_msg)
-    update.message.bot.get_file = AsyncMock()
-    update.message.bot.get_file.return_value.download_as_bytearray = AsyncMock(
+    context = MagicMock()
+    context.bot.get_file = AsyncMock()
+    context.bot.get_file.return_value.download_as_bytearray = AsyncMock(
         return_value=b"fake audio data"
     )
-
-    context = MagicMock()
     await cmd_set_party_voice(update, context)
 
     mock_db.upload_to_supabase_storage.assert_called_once()
@@ -120,16 +118,16 @@ async def test_set_party_voice_no_reply(mock_db: MagicMock) -> None:
 async def test_set_party_voice_file_too_large(mock_db: MagicMock) -> None:
     """File larger than 5MB should be rejected."""
     update = _make_update_with_voice()
-    update.message.bot.get_file = AsyncMock()
-    # Return 6MB of data
-    update.message.bot.get_file.return_value.download_as_bytearray = AsyncMock(
-        return_value=b"x" * (6 * 1024 * 1024)
-    )
     update.message.reply_text = AsyncMock()
     status_msg = AsyncMock()
     update.message.reply_text.return_value = status_msg
 
     context = MagicMock()
+    context.bot.get_file = AsyncMock()
+    # Return 6MB of data
+    context.bot.get_file.return_value.download_as_bytearray = AsyncMock(
+        return_value=b"x" * (6 * 1024 * 1024)
+    )
 
     await cmd_set_party_voice(update, context)
 
@@ -148,6 +146,10 @@ async def test_set_party_voice_too_long(mock_db: MagicMock) -> None:
     update.message.reply_text.return_value = status_msg
 
     context = MagicMock()
+    context.bot.get_file = AsyncMock()
+    context.bot.get_file.return_value.download_as_bytearray = AsyncMock(
+        return_value=b"fake audio data"
+    )
 
     await cmd_set_party_voice(update, context)
 
@@ -165,13 +167,13 @@ async def test_set_party_voice_upload_error(mock_db: MagicMock) -> None:
     )
 
     update = _make_update_with_voice()
-    update.message.bot.get_file = AsyncMock()
-    update.message.bot.get_file.return_value.download_as_bytearray = AsyncMock(
-        return_value=b"fake audio data"
-    )
     update.message.reply_text = AsyncMock()
 
     context = MagicMock()
+    context.bot.get_file = AsyncMock()
+    context.bot.get_file.return_value.download_as_bytearray = AsyncMock(
+        return_value=b"fake audio data"
+    )
 
     await cmd_set_party_voice(update, context)
 
@@ -232,12 +234,12 @@ async def test_set_party_voice_db_upsert_error_still_reports_upload(mock_db: Mag
 
     update = _make_update_with_voice(voice_duration=30)
     update.message.reply_text = AsyncMock(return_value=status_msg)
-    update.message.bot.get_file = AsyncMock()
-    update.message.bot.get_file.return_value.download_as_bytearray = AsyncMock(
-        return_value=b"fake audio data"
-    )
 
     context = MagicMock()
+    context.bot.get_file = AsyncMock()
+    context.bot.get_file.return_value.download_as_bytearray = AsyncMock(
+        return_value=b"fake audio data"
+    )
 
     await cmd_set_party_voice(update, context)
 

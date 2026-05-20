@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import httpx
 from fastapi import APIRouter, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from twilio.twiml.voice_response import Gather, VoiceResponse
 
 from src import db
+from src.config import settings
 from src.log import get_logger
 
 logger = get_logger("twilio")
@@ -69,31 +71,47 @@ def _get_published_script() -> str:
     return "No recommendations this week. Call back next week."
 
 
+@router.get("/party_audio")
+async def party_audio(request: Request) -> Response:
+    """Proxy the party voice note audio to Twilio from Supabase storage."""
+    try:
+        voice_note = db.get_party_voice_note()
+        storage_url = voice_note["media_url"] if voice_note else db.get_party_voice_storage_url()
+        async with httpx.AsyncClient() as client:
+            upstream = await client.get(storage_url, timeout=10.0)
+            upstream.raise_for_status()
+        return Response(
+            content=upstream.content,
+            media_type="audio/ogg; codecs=opus",
+            headers={"Cache-Control": "no-cache"},
+        )
+    except Exception:
+        logger.exception("party_audio_proxy_failed")
+        return Response(status_code=404)
+
+
 @router.post("/party_instructions")
 async def party_instructions(request: Request) -> Response:
     """Play back party voice instructions, or fallback if none available."""
-    media_url = ""
+    has_voice = False
     try:
         voice_note = db.get_party_voice_note()
-        if voice_note and voice_note.get("media_url"):
-            media_url = voice_note["media_url"]
+        has_voice = bool(voice_note and voice_note.get("media_url"))
     except Exception:
         logger.exception("party_instructions_db_error")
 
-    if not media_url:
+    if not has_voice:
         try:
-            if db.party_voice_exists_in_storage():
-                media_url = db.get_party_voice_storage_url()
+            has_voice = db.party_voice_exists_in_storage()
         except Exception:
             logger.exception("party_instructions_storage_lookup_error")
 
+    audio_url = f"{settings.base_url}/twilio/party_audio" if has_voice else ""
+
     resp = VoiceResponse()
 
-    if media_url:
-        try:
-            resp.play(media_url)
-        except Exception:
-            logger.exception("party_instructions_play_error", url=media_url)
+    if audio_url:
+        resp.play(audio_url)
 
         resp.pause(length=1)
         resp.say(
