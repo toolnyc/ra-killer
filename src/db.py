@@ -23,27 +23,20 @@ def get_client():
 
 
 def ensure_party_voice_table_exists() -> None:
-    """Ensure the party_voice_note table exists in Supabase."""
+    """Ensure the party_voice_note table exists in Supabase.
+    
+    If table doesn't exist, logs instructions for manual creation.
+    """
     try:
         # Try to read from the table - if it doesn't exist, this will fail
         get_client().table("party_voice_note").select("*").limit(1).execute()
+        logger.debug("party_voice_table_exists")
     except Exception as e:
-        # Table doesn't exist, create it
+        # Table doesn't exist - log the SQL needed for manual creation
         error_msg = str(e).lower()
-        if "relation" in error_msg or "does not exist" in error_msg or "not found" in error_msg:
-            # Use RPC to create the table
-            get_client().rpc("exec_sql", {
-                "sql": """
-                CREATE TABLE IF NOT EXISTS party_voice_note (
-                    id BIGINT PRIMARY KEY DEFAULT 1,
-                    media_url TEXT NOT NULL,
-                    updated_by TEXT,
-                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                    CONSTRAINT party_voice_note_single_row CHECK (id = 1)
-                )
-                """
-            }).execute()
+        if "could not find" in error_msg or "relation" in error_msg or "does not exist" in error_msg or "not found" in error_msg:
+            logger.warning("party_voice_table_missing", 
+                         instructions="Create table in Supabase dashboard with: CREATE TABLE party_voice_note (id BIGINT PRIMARY KEY DEFAULT 1, media_url TEXT NOT NULL, updated_by TEXT, updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), CONSTRAINT party_voice_note_single_row CHECK (id = 1));")
         else:
             # Some other error, re-raise it
             raise
@@ -614,30 +607,51 @@ PARTY_VOICE_FILENAME = "party_voice_note.ogg"
 
 def upsert_party_voice_note(media_url: str, updated_by: str | None = None) -> None:
     """Set or update the active party voice note."""
-    get_client().table("party_voice_note").upsert({
-        "id": 1,
-        "media_url": media_url,
-        "updated_by": updated_by,
-        "updated_at": datetime.utcnow().isoformat()
-    }).execute()
+    try:
+        get_client().table("party_voice_note").upsert({
+            "id": 1,
+            "media_url": media_url,
+            "updated_by": updated_by,
+            "updated_at": datetime.utcnow().isoformat()
+        }).execute()
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "could not find" in error_msg or "relation" in error_msg:
+            logger.warning("party_voice_table_missing_on_upsert", media_url=media_url)
+            raise
+        raise
 
 
 def get_party_voice_note() -> dict | None:
     """Get the current party voice note."""
-    result = (
-        get_client()
-        .table("party_voice_note")
-        .select("*")
-        .eq("id", 1)
-        .maybeSingle()
-        .execute()
-    )
-    return result.data if result.data else None
+    try:
+        result = (
+            get_client()
+            .table("party_voice_note")
+            .select("*")
+            .eq("id", 1)
+            .maybeSingle()
+            .execute()
+        )
+        return result.data if result.data else None
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "could not find" in error_msg or "relation" in error_msg:
+            logger.debug("party_voice_table_missing_on_get")
+            return None
+        raise
 
 
 def delete_party_voice_note() -> None:
     """Remove the active party voice note."""
-    get_client().table("party_voice_note").delete().eq("id", 1).execute()
+    try:
+        get_client().table("party_voice_note").delete().eq("id", 1).execute()
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "could not find" in error_msg or "relation" in error_msg:
+            logger.debug("party_voice_table_missing_on_delete")
+            return
+        raise
 
 
 def get_party_voice_storage_url(filename: str = PARTY_VOICE_FILENAME) -> str:
