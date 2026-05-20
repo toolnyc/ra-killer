@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from src.bot.telegram import get_app
 from src.bot.twilio_ivr import router as twilio_router
 from src.config import settings
+from src.db import ensure_party_voice_table_exists
 from src.log import get_logger
 from src.scheduler import create_scheduler
 
@@ -17,6 +18,13 @@ logger = get_logger("main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Ensure database tables exist
+    try:
+        ensure_party_voice_table_exists()
+        logger.info("party_voice_table_initialized")
+    except Exception:
+        logger.exception("party_voice_table_init_failed")
+
     # Start scheduler
     scheduler = create_scheduler()
     scheduler.start()

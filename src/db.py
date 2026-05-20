@@ -6,8 +6,11 @@ from datetime import date, datetime, time, timedelta
 from supabase import create_client
 
 from src.config import settings
+from src.log import get_logger
 from src.models import Event, Recommendation, ScrapedEvent, TasteEntry, WeeklyScript
 from src.normalize import normalize_artist, normalize_venue
+
+logger = get_logger(__name__)
 
 _client = None
 
@@ -17,6 +20,33 @@ def get_client():
     if _client is None:
         _client = create_client(settings.supabase_url, settings.supabase_key)
     return _client
+
+
+def ensure_party_voice_table_exists() -> None:
+    """Ensure the party_voice_note table exists in Supabase."""
+    try:
+        # Try to read from the table - if it doesn't exist, this will fail
+        get_client().table("party_voice_note").select("*").limit(1).execute()
+    except Exception as e:
+        # Table doesn't exist, create it
+        error_msg = str(e).lower()
+        if "relation" in error_msg or "does not exist" in error_msg or "not found" in error_msg:
+            # Use RPC to create the table
+            get_client().rpc("exec_sql", {
+                "sql": """
+                CREATE TABLE IF NOT EXISTS party_voice_note (
+                    id BIGINT PRIMARY KEY DEFAULT 1,
+                    media_url TEXT NOT NULL,
+                    updated_by TEXT,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    CONSTRAINT party_voice_note_single_row CHECK (id = 1)
+                )
+                """
+            }).execute()
+        else:
+            # Some other error, re-raise it
+            raise
 
 
 def _serialize_event(e: ScrapedEvent) -> dict:
