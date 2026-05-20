@@ -507,7 +507,7 @@ async def cmd_set_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         status_msg = await update.message.reply_text("Uploading voice note...")
         file_info = await update.message.bot.get_file(media.file_id)
-        file_data = await file_info.download_as_bytearray()
+        file_data = bytes(await file_info.download_as_bytearray())
 
         # Check file size (Twilio supports up to 5MB)
         if len(file_data) > 5 * 1024 * 1024:

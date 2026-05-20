@@ -743,7 +743,7 @@ async def upload_to_supabase_storage(file_data: bytes, filename: str = PARTY_VOI
             logger.exception("party_voice_upload_retry_failed", bucket=bucket, path=path, error_type="retry_upload_error")
             raise
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _upload)
 
 
@@ -756,7 +756,7 @@ async def delete_party_voice_from_storage(filename: str = PARTY_VOICE_FILENAME) 
             return
         get_client().storage.from_(PARTY_VOICE_BUCKET).remove([filename])
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _delete)
 
 
