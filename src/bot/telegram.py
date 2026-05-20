@@ -506,7 +506,7 @@ async def cmd_set_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Download voice from Telegram
     try:
         status_msg = await update.message.reply_text("Uploading voice note...")
-        file_info = await update.message.bot.get_file(media.file_id)
+        file_info = await context.bot.get_file(media.file_id)
         file_data = bytes(await file_info.download_as_bytearray())
 
         # Check file size (Twilio supports up to 5MB)
