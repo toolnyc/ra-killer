@@ -617,19 +617,26 @@ async def upload_to_supabase_storage(file_data: bytes, filename: str) -> str:
     Returns:
         Public HTTPS URL to the uploaded file
     """
+    import asyncio
+    from functools import partial
+    
     bucket = "party-voice-notes"
     path = f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{filename}"
     
-    # Upload file
-    get_client().storage.from_(bucket).upload(
-        path=path,
-        file=file_data,
-        file_options={"content-type": "audio/ogg"}
-    )
+    # Upload file in thread pool to avoid blocking the event loop
+    # (Supabase storage API calls are synchronous)
+    def _upload() -> str:
+        get_client().storage.from_(bucket).upload(
+            path=path,
+            file=file_data,
+            file_options={"content-type": "audio/ogg"}
+        )
+        # Get public URL
+        public_url = get_client().storage.from_(bucket).get_public_url(path)
+        return public_url
     
-    # Get public URL
-    public_url = get_client().storage.from_(bucket).get_public_url(path)
-    return public_url
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _upload)
 
 
 async def download_from_supabase_storage(public_url: str) -> bytes:
@@ -640,9 +647,12 @@ async def download_from_supabase_storage(public_url: str) -> bytes:
     
     Returns:
         Binary file content
+    
+    Raises:
+        HTTPError: If the download fails (4xx or 5xx response)
     """
     import httpx
     async with httpx.AsyncClient() as client:
-        response = await client.get(public_url)
+        response = await client.get(public_url, timeout=30.0)
         response.raise_for_status()
         return response.content

@@ -1,3 +1,5 @@
+@import /Users/pete/Code/.agent/conventions.md
+
 # ra-killer — Agent Instructions
 
 NYC event aggregator + recommendation system. Scrapes 6 sources, deduplicates, scores, delivers via Telegram and Twilio IVR.
