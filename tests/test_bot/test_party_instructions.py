@@ -30,7 +30,7 @@ async def test_party_instructions_with_voice_note(mock_db: MagicMock) -> None:
     
     body = response.body if isinstance(response.body, str) else response.body.decode()
 
-    assert f"<Play>{PROXY_URL}</Play>" in body
+    assert f"<Play>{PROXY_URL}" in body
     assert "Press star to return to the main menu" in body
     assert "<Gather" in body
 
@@ -107,7 +107,7 @@ async def test_party_instructions_storage_fallback(mock_db: MagicMock) -> None:
 
     body = response.body if isinstance(response.body, str) else response.body.decode()
 
-    assert f"<Play>{PROXY_URL}</Play>" in body
+    assert f"<Play>{PROXY_URL}" in body
 
 
 @pytest.mark.asyncio

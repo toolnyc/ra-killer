@@ -105,6 +105,7 @@ async def party_audio(request: Request) -> Response:
 @router.post("/party_instructions")
 async def party_instructions(request: Request) -> Response:
     """Play back party voice instructions, or fallback if none available."""
+    voice_note = None
     has_voice = False
     try:
         voice_note = db.get_party_voice_note()
@@ -118,7 +119,14 @@ async def party_instructions(request: Request) -> Response:
         except Exception:
             logger.exception("party_instructions_storage_lookup_error")
 
-    audio_url = f"{settings.base_url}/twilio/party_audio" if has_voice else ""
+    if has_voice:
+        # Use updated_at as cache-buster so Twilio fetches fresh audio after each upload
+        ts = ""
+        if voice_note and voice_note.get("updated_at"):
+            ts = voice_note["updated_at"].replace(":", "").replace("-", "").replace("+", "").replace(".", "")
+        audio_url = f"{settings.base_url}/twilio/party_audio?v={ts}"
+    else:
+        audio_url = ""
 
     resp = VoiceResponse()
 
