@@ -1,3 +1,5 @@
+> **Where things live** - Client: - | Bucket: `lab/` | Dropbox: `-` | Registry: `~/Code/toolhub/CoS/REGISTRY.md`
+
 @import /Users/pete/Code/.agent/conventions.md
 
 # ra-killer — Agent Instructions
