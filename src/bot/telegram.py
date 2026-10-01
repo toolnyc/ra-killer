@@ -4,24 +4,18 @@ import functools
 from datetime import date, timedelta
 from typing import Callable
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 from src import db
 from src.config import settings
 from src.log import get_logger
-from src.models import Event, Recommendation, TasteEntry, WeeklyScript
-from src.recommend.ranker import run_recommendation_pipeline, run_training_pipeline
-from src.recommend.script_writer import apply_script_edits, generate_weekly_script
+from src.models import Event, TasteEntry
 
 logger = get_logger("telegram")
+
+# Comfortable margin under Twilio <Say> limits
+HOTLINE_MESSAGE_MAX_CHARS = 1500
 
 
 def _command_error_handler(func: Callable) -> Callable:
@@ -53,94 +47,76 @@ def get_app() -> Application:
 
 def _register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("upcoming", cmd_upcoming))
     app.add_handler(CommandHandler("taste", cmd_taste))
     app.add_handler(CommandHandler("add_artist", cmd_add_artist))
     app.add_handler(CommandHandler("add_venue", cmd_add_venue))
     app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("train", cmd_train))
-    app.add_handler(CommandHandler("script", cmd_script))
-    app.add_handler(CommandHandler("write", cmd_write))
-    app.add_handler(CommandHandler("push", cmd_push))
-    app.add_handler(CommandHandler("set_party_voice", cmd_set_party_voice))
-    app.add_handler(CommandHandler("clear_party_voice", cmd_clear_party_voice))
-    app.add_handler(CommandHandler("preview_party_voice", cmd_preview_party_voice))
-    app.add_handler(CallbackQueryHandler(handle_feedback))
-    app.add_handler(MessageHandler(filters.REPLY & ~filters.COMMAND, handle_reply))
+    app.add_handler(CommandHandler("set_main", cmd_set_main))
+    app.add_handler(CommandHandler("set_party", cmd_set_party))
+    app.add_handler(CommandHandler("preview_messages", cmd_preview_messages))
 
 
 @_command_error_handler
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "Welcome to Clubstack! NYC event recommendations.\n\n"
+        "Welcome to Clubstack! NYC event aggregator + hotline.\n\n"
         "Commands:\n"
-        "/upcoming - Top upcoming events\n"
+        "/set_main <text> - Set the press-1 hotline message\n"
+        "/set_party <text> - Set the press-2 hotline message\n"
+        "/preview_messages - Show current hotline messages\n"
         "/taste - View your taste profile\n"
         "/add_artist <name> - Add a favorite artist\n"
         "/add_venue <name> - Add a favorite venue\n"
-        "/train [N] - Score N past events for taste training\n"
-        "/script - Generate/view weekly IVR script\n"
-        "/write <text> - Hand-write an IVR script\n"
-        "/push - Push approved script to the hotline\n"
         "/status - System status"
     )
 
 
-@_command_error_handler
-async def cmd_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    week_cutoff = date.today() + timedelta(days=7)
+def _set_hotline_message(slot: str, slot_label: str):
+    """Build a command handler that stores a hotline message for a slot."""
 
-    # Fetch or generate taste-ranked recommendations
-    recs = db.get_week_recommendations()
-
-    if not recs:
-        status_msg = await update.message.reply_text("Scoring upcoming events...")
-        await run_recommendation_pipeline(top_n=10)
-        recs = db.get_week_recommendations()
-        try:
-            await status_msg.delete()
-        except Exception:
-            pass
-
-    if not recs:
-        await update.message.reply_text("No recommendations yet. Try again after a scrape runs.")
-        return
-
-    events_map = {e.id: e for e in db.get_upcoming_events() if e.event_date <= week_cutoff}
-
-    sent = 0
-    for r in recs:
-        event = events_map.get(r.get("event_id"))
-        if not event:
-            continue
-        rec = Recommendation(
-            id=r["id"],
-            event_id=r["event_id"],
-            score=r.get("score", 0),
-            reasoning=r.get("reasoning", ""),
-        )
-        text = _format_event(event)
-        text += f"\n\nScore: {rec.score:.0f}/100"
-        if rec.reasoning:
-            text += f"\n{rec.reasoning}"
-
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("Add to Script", callback_data=f"curate_add:{rec.id}"),
-                    InlineKeyboardButton("Skip", callback_data=f"curate_skip:{rec.id}"),
-                ]
-            ]
-        )
+    @_command_error_handler
+    async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not context.args:
+            await update.message.reply_text(f"Usage: /set_{slot} <text>")
+            return
+        body = " ".join(context.args)
+        if len(body) > HOTLINE_MESSAGE_MAX_CHARS:
+            await update.message.reply_text(
+                f"Message too long ({len(body)} chars). Max is {HOTLINE_MESSAGE_MAX_CHARS}."
+            )
+            return
+        username = update.message.from_user.username or str(update.message.from_user.id)
+        db.upsert_hotline_message(slot, body, updated_by=username)
         await update.message.reply_text(
-            text, parse_mode="HTML", reply_markup=keyboard, disable_web_page_preview=True
+            f"{slot_label} message updated. Callers pressing it will now hear:\n\n{body}"
         )
-        sent += 1
-        if sent >= 10:
-            break
+        logger.info("hotline_message_updated", slot=slot, updated_by=username)
 
-    if sent == 0:
-        await update.message.reply_text("No upcoming events found.")
+    return handler
+
+
+cmd_set_main = _set_hotline_message("main", "Main (press 1)")
+cmd_set_party = _set_hotline_message("party", "Party (press 2)")
+
+
+@_command_error_handler
+async def cmd_preview_messages(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    messages = {row["slot"]: row for row in db.get_all_hotline_messages()}
+    labels = {"main": "Main (press 1)", "party": "Party (press 2)"}
+
+    parts = []
+    for slot in ("main", "party"):
+        row = messages.get(slot)
+        if row:
+            parts.append(
+                f"<b>{labels[slot]}:</b>\n{row['body']}\n"
+                f"<i>updated {row.get('updated_at', 'unknown')} "
+                f"by {row.get('updated_by') or 'unknown'}</i>"
+            )
+        else:
+            parts.append(f"<b>{labels[slot]}:</b>\n<i>(not set)</i>")
+
+    await update.message.reply_text("\n\n".join(parts), parse_mode="HTML")
 
 
 @_command_error_handler
@@ -219,146 +195,6 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
-@_command_error_handler
-async def cmd_train(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Score past events for taste training with Going/Pass feedback."""
-    top_n = 10
-    if context.args:
-        try:
-            top_n = int(context.args[0])
-            top_n = max(1, min(top_n, 50))
-        except ValueError:
-            await update.message.reply_text("Usage: /train [number] (e.g. /train 15)")
-            return
-
-    status_msg = await update.message.reply_text(f"Scoring {top_n} past events...")
-
-    recs = await run_training_pipeline(top_n=top_n)
-    if not recs:
-        await status_msg.edit_text("No past events to score (all may already be rated).")
-        return
-
-    events_map = {e.id: e for e in db.get_past_events()}
-
-    sent = 0
-    for rec in recs:
-        event = events_map.get(rec.event_id)
-        if not event:
-            continue
-
-        text, keyboard = _format_recommendation(rec, event)
-        msg = await update.message.chat.send_message(
-            text=text,
-            parse_mode="HTML",
-            reply_markup=keyboard,
-            disable_web_page_preview=True,
-        )
-        db.update_recommendation_message_id(rec.id, msg.message_id)
-        sent += 1
-
-    await status_msg.edit_text(f"Sent {sent} past events for training. Tap Going/Pass to refine your taste!")
-
-
-async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle inline keyboard feedback (Going/Pass and script approve/regen)."""
-    query = update.callback_query
-
-    data = query.data
-    if ":" not in data:
-        await query.answer()
-        return
-
-    action, target_id = data.split(":", 1)
-
-    # --- Script callbacks ---
-    if action == "script_approve":
-        await query.answer("Approved!")
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        try:
-            db.approve_weekly_script(target_id)
-            await query.message.reply_text(
-                "Script approved! Use /push to make it live on the hotline."
-            )
-        except Exception:
-            logger.exception("script_approve_failed", script_id=target_id)
-            await query.message.reply_text("Failed to approve script.")
-        return
-
-    if action == "script_regen":
-        await query.answer("Regenerating...")
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        await send_weekly_script_draft(chat_id=query.message.chat_id)
-        return
-
-    # --- Curation feedback (from /upcoming) ---
-    if action in ("curate_add", "curate_skip"):
-        rec_id = target_id
-        feedback = "approve" if action == "curate_add" else "reject"
-        label = "Added to script" if action == "curate_add" else "Skipped"
-
-        await query.answer(label)
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-
-        try:
-            db.update_recommendation_feedback(rec_id, feedback)
-        except Exception:
-            logger.exception("curation_failed", rec_id=rec_id, action=action)
-
-        await query.message.reply_text(label)
-        return
-
-    # --- Training feedback (from /train) ---
-    rec_id = target_id
-    if action not in ("approve", "reject"):
-        await query.answer()
-        return
-
-    # Check if already processed (idempotency guard for duplicate callbacks)
-    rec_data = db.get_recommendation_by_message_id(query.message.message_id)
-    if rec_data and rec_data.get("feedback"):
-        await query.answer("Already recorded!")
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-        return
-
-    label = "Going!" if action == "approve" else "Pass"
-
-    await query.answer(label)
-    try:
-        await query.edit_message_reply_markup(reply_markup=None)
-    except Exception:
-        pass
-
-    # Persist feedback and update taste weights
-    try:
-        db.update_recommendation_feedback(rec_id, action)
-
-        if rec_data and rec_data.get("events"):
-            ev = rec_data["events"]
-            delta = 0.1 if action == "approve" else -0.1
-
-            for artist in ev.get("artists") or []:
-                db.update_taste_weight("artist", artist, delta)
-
-            if ev.get("venue_name"):
-                db.update_taste_weight("venue", ev["venue_name"], delta)
-    except Exception:
-        logger.exception("feedback_processing_failed", rec_id=rec_id, action=action)
-
-    await query.message.reply_text(f"Marked as: {label}")
-
-
 def _format_event(event: Event) -> str:
     """Format an event for Telegram display."""
     artists = ", ".join(event.artists) if event.artists else "TBA"
@@ -384,346 +220,6 @@ def _format_event(event: Event) -> str:
         lines.append("Links: " + " | ".join(link_parts))
 
     return "\n".join(lines)
-
-
-def _format_recommendation(rec: Recommendation, event: Event) -> tuple[str, InlineKeyboardMarkup]:
-    """Format a recommendation with inline keyboard."""
-    text = _format_event(event)
-    text += f"\n\nScore: {rec.score:.0f}/100"
-    if rec.reasoning:
-        text += f"\n{rec.reasoning}"
-
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("Going", callback_data=f"approve:{rec.id}"),
-                InlineKeyboardButton("Pass", callback_data=f"reject:{rec.id}"),
-            ]
-        ]
-    )
-
-    return text, keyboard
-
-
-@_command_error_handler
-async def cmd_script(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Generate a weekly IVR script draft, or show the current approved one."""
-    if context.args and context.args[0].lower() == "current":
-        from src.recommend.script_writer import _monday_of_week
-
-        week_start = _monday_of_week(date.today())
-        # Show published (live) script first, fall back to approved
-        script = db.get_published_script(week_start)
-        label = "Live"
-        if not script:
-            script = db.get_latest_approved_script(week_start)
-            label = "Approved (not yet pushed)"
-        if script:
-            await update.message.reply_text(
-                f"<b>{label} script (week of {script.week_start}):</b>\n\n{script.script_text}",
-                parse_mode="HTML",
-            )
-        else:
-            await update.message.reply_text("No script for this week. Use /script to generate one.")
-        return
-
-    status_msg = await update.message.reply_text("Generating weekly script draft...")
-    await send_weekly_script_draft(chat_id=update.message.chat_id, status_msg=status_msg)
-
-
-@_command_error_handler
-async def cmd_write(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Hand-write an IVR script and save as draft."""
-    from src.recommend.script_writer import _monday_of_week
-
-    if not context.args:
-        await update.message.reply_text("Usage: /write Hey, you've reached Clubstack...")
-        return
-
-    script_text = " ".join(context.args)
-    week_start = _monday_of_week(date.today())
-    script = WeeklyScript(
-        week_start=week_start,
-        status="draft",
-        script_text=script_text,
-        source_event_ids=[],
-    )
-    script_id = db.save_weekly_script(script)
-
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("Approve", callback_data=f"script_approve:{script_id}"),
-                InlineKeyboardButton("Regenerate", callback_data=f"script_regen:{script_id}"),
-            ]
-        ]
-    )
-
-    text = f"<b>Manual Script Draft</b> (week of {week_start})\n\n{script_text}"
-    if len(text) > 4096:
-        text = text[:4090] + "..."
-
-    msg = await update.message.reply_text(
-        text, parse_mode="HTML", reply_markup=keyboard
-    )
-    db.update_weekly_script_message_id(script_id, msg.message_id)
-
-
-@_command_error_handler
-async def cmd_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Push the approved script to the IVR hotline (make it live)."""
-    from src.recommend.script_writer import _monday_of_week
-
-    week_start = _monday_of_week(date.today())
-    script = db.get_latest_approved_script(week_start)
-    if not script:
-        await update.message.reply_text(
-            "No approved script to push. Generate and approve one first with /script."
-        )
-        return
-
-    db.publish_weekly_script(script.id)
-    await update.message.reply_text(
-        f"Script pushed! It's now live on the hotline (week of {script.week_start})."
-    )
-    logger.info("script_pushed_to_ivr", script_id=script.id, week_start=str(script.week_start))
-
-
-@_command_error_handler
-async def cmd_set_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Set/update the party voice note from a voice message."""
-    reply_msg = update.message.reply_to_message
-    media = reply_msg.voice if reply_msg else None
-    if not media and reply_msg:
-        media = reply_msg.audio
-
-    if not reply_msg or not media:
-        await update.message.reply_text(
-            "Reply to a voice or audio message with /set_party_voice to set party instructions."
-        )
-        return
-
-    # Download voice from Telegram
-    try:
-        status_msg = await update.message.reply_text("Uploading voice note...")
-        file_info = await context.bot.get_file(media.file_id)
-        file_data = bytes(await file_info.download_as_bytearray())
-
-        # Check file size (Twilio supports up to 5MB)
-        if len(file_data) > 5 * 1024 * 1024:
-            await status_msg.edit_text("File too large. Please compress or re-record (max 5MB).")
-            return
-
-        # Check duration (warn if > 30 seconds)
-        if media.duration and media.duration > 60:
-            await status_msg.edit_text(
-                f"Voice note too long ({media.duration}s). Please keep it under 60 seconds."
-            )
-            return
-
-        # Upload to Supabase Storage
-        media_url = await db.upload_to_supabase_storage(file_data, db.PARTY_VOICE_FILENAME)
-
-        # Update database
-        username = update.message.from_user.username or str(update.message.from_user.id)
-        try:
-            db.upsert_party_voice_note(media_url=media_url, updated_by=username)
-        except Exception:
-            logger.exception("party_voice_db_upsert_failed")
-            await status_msg.edit_text(
-                "Party voice uploaded, but metadata save failed. Playback should still work."
-            )
-            return
-
-        await status_msg.edit_text(
-            "Party voice note updated! Callers pressing 3 will now hear this recording."
-        )
-        logger.info("party_voice_updated", updated_by=username)
-    except Exception as exc:
-        logger.exception("set_party_voice_failed", error=str(exc))
-        await update.message.reply_text(
-            "Failed to upload voice note. Please try again or contact admin."
-        )
-
-
-@_command_error_handler
-async def cmd_clear_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Clear the party voice note."""
-    had_error = False
-    try:
-        db.delete_party_voice_note()
-    except Exception:
-        had_error = True
-        logger.exception("clear_party_voice_db_failed")
-
-    try:
-        await db.delete_party_voice_from_storage()
-    except Exception:
-        had_error = True
-        logger.exception("clear_party_voice_storage_failed")
-
-    if had_error:
-        await update.message.reply_text("Failed to clear voice note.")
-        return
-
-    await update.message.reply_text(
-        "Party voice note cleared. Callers pressing 3 will now hear 'no instructions available'."
-    )
-    logger.info("party_voice_cleared")
-
-
-@_command_error_handler
-async def cmd_preview_party_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Preview the current party voice note."""
-    try:
-        voice_note = db.get_party_voice_note()
-
-        if not voice_note or not voice_note.get("media_url"):
-            await update.message.reply_text("No party voice note is currently set.")
-            return
-
-        # Download from storage and send to user
-        file_data = await db.download_from_supabase_storage(voice_note["media_url"])
-        updated_at = voice_note.get("updated_at", "unknown")
-        updated_by = voice_note.get("updated_by", "unknown")
-
-        caption = f"Current party voice note\n(updated {updated_at} by @{updated_by})"
-
-        await update.message.reply_voice(
-            voice=file_data,
-            caption=caption,
-        )
-    except Exception:
-        logger.exception("preview_party_voice_failed")
-        await update.message.reply_text("Failed to preview voice note.")
-
-
-async def send_weekly_script_draft(chat_id: str | int | None = None, status_msg=None) -> None:
-    """Generate a draft script and send it to Telegram with Approve/Regenerate buttons."""
-    if chat_id is None:
-        chat_id = settings.telegram_chat_id
-    if not settings.telegram_bot_token or not chat_id:
-        logger.warning("telegram_not_configured")
-        return
-
-    script = await generate_weekly_script()
-    script_id = db.save_weekly_script(script)
-    script.id = script_id
-
-    app = get_app()
-    bot = app.bot
-
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("Approve", callback_data=f"script_approve:{script_id}"),
-                InlineKeyboardButton("Regenerate", callback_data=f"script_regen:{script_id}"),
-            ]
-        ]
-    )
-
-    text = f"<b>Weekly Script Draft</b> (week of {script.week_start})\n\n{script.script_text}"
-    # Telegram message limit is 4096 chars
-    if len(text) > 4096:
-        text = text[:4090] + "..."
-
-    msg = await bot.send_message(
-        chat_id=chat_id,
-        text=text,
-        parse_mode="HTML",
-        reply_markup=keyboard,
-    )
-
-    db.update_weekly_script_message_id(script_id, msg.message_id)
-
-    if status_msg:
-        try:
-            await status_msg.edit_text("Draft generated! Review below and reply to edit, or tap Approve.")
-        except Exception:
-            pass
-
-    logger.info("weekly_script_draft_sent", script_id=script_id)
-
-
-async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle replies to draft script messages — apply edits via Claude."""
-    if not update.message or not update.message.reply_to_message:
-        return
-
-    reply_to_id = update.message.reply_to_message.message_id
-    script = db.get_draft_script_by_message_id(reply_to_id)
-    if not script:
-        return  # Not a reply to a script draft
-
-    instructions = update.message.text
-    if not instructions:
-        return
-
-    status_msg = await update.message.reply_text("Applying edits...")
-
-    try:
-        new_text = await apply_script_edits(script.script_text, instructions)
-        db.update_weekly_script_text(script.id, new_text)
-
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("Approve", callback_data=f"script_approve:{script.id}"),
-                    InlineKeyboardButton("Regenerate", callback_data=f"script_regen:{script.id}"),
-                ]
-            ]
-        )
-
-        text = f"<b>Updated Script Draft</b>\n\n{new_text}"
-        if len(text) > 4096:
-            text = text[:4090] + "..."
-
-        msg = await update.message.chat.send_message(
-            text=text,
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
-        db.update_weekly_script_message_id(script.id, msg.message_id)
-        await status_msg.edit_text("Edits applied! Review the updated draft above.")
-    except Exception:
-        logger.exception("script_edit_failed")
-        await status_msg.edit_text("Failed to apply edits. Try again.")
-
-
-async def send_daily_recommendations(top_n: int = 10) -> None:
-    """Run recommendation pipeline and send results to Telegram."""
-    if not settings.telegram_bot_token or not settings.telegram_chat_id:
-        logger.warning("telegram_not_configured")
-        return
-
-    recs = await run_recommendation_pipeline(top_n=top_n)
-    if not recs:
-        logger.info("no_recommendations_to_send")
-        return
-
-    app = get_app()
-    bot = app.bot
-
-    events_map = {e.id: e for e in db.get_upcoming_events()}
-
-    for rec in recs:
-        event = events_map.get(rec.event_id)
-        if not event:
-            continue
-
-        text, keyboard = _format_recommendation(rec, event)
-        msg = await bot.send_message(
-            chat_id=settings.telegram_chat_id,
-            text=text,
-            parse_mode="HTML",
-            reply_markup=keyboard,
-            disable_web_page_preview=True,
-        )
-
-        # Store message ID for feedback tracking
-        db.update_recommendation_message_id(rec.id, msg.message_id)
-
-    logger.info("daily_recs_sent", count=len(recs))
 
 
 async def send_weekend_preview() -> None:

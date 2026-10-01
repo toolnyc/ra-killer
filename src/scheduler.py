@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src import db
-from src.bot.telegram import send_daily_recommendations, send_weekend_preview, send_weekly_script_draft
+from src.bot.telegram import send_weekend_preview
 from src.log import get_logger
 from src.notify.alerts import send_alert
 from src.scrapers.runner import run_scrape_pipeline
@@ -25,17 +25,6 @@ async def job_scrape() -> None:
         await send_alert("scheduler", f"Scrape pipeline failed: {e}")
 
 
-async def job_recommend() -> None:
-    """Score and send daily recommendations (9 AM)."""
-    logger.info("job_recommend_start")
-    try:
-        await send_daily_recommendations(top_n=10)
-        logger.info("job_recommend_done")
-    except Exception as e:
-        logger.error("job_recommend_failed", error=str(e))
-        await send_alert("scheduler", f"Recommendation pipeline failed: {e}")
-
-
 async def job_weekend_preview() -> None:
     """Weekend preview push (Tuesday 9 PM)."""
     logger.info("job_weekend_preview_start")
@@ -45,17 +34,6 @@ async def job_weekend_preview() -> None:
     except Exception as e:
         logger.error("job_weekend_preview_failed", error=str(e))
         await send_alert("scheduler", f"Weekend preview failed: {e}")
-
-
-async def job_weekly_script() -> None:
-    """Generate weekly IVR script draft (Wednesday 10 AM)."""
-    logger.info("job_weekly_script_start")
-    try:
-        await send_weekly_script_draft()
-        logger.info("job_weekly_script_done")
-    except Exception as e:
-        logger.error("job_weekly_script_failed", error=str(e))
-        await send_alert("scheduler", f"Weekly script generation failed: {e}")
 
 
 async def job_cleanup() -> None:
@@ -90,17 +68,9 @@ def create_scheduler() -> AsyncIOScheduler:
     # Scrape at 6 AM and 6 PM ET
     scheduler.add_job(job_scrape, "cron", hour="6,18", minute=0, timezone="America/New_York")
 
-    # Daily recommendations at 9 AM ET
-    scheduler.add_job(job_recommend, "cron", hour=9, minute=0, timezone="America/New_York")
-
     # Weekend preview: Tuesday at 9 PM ET
     scheduler.add_job(
         job_weekend_preview, "cron", day_of_week="tue", hour=21, minute=0, timezone="America/New_York"
-    )
-
-    # Weekly script draft: Wednesday at 10 AM ET
-    scheduler.add_job(
-        job_weekly_script, "cron", day_of_week="wed", hour=10, minute=0, timezone="America/New_York"
     )
 
     # Cleanup at midnight ET

@@ -4,9 +4,9 @@ A plain-English guide to how this whole system works, how to keep it running, an
 
 ## What is this thing?
 
-ra-killer is a robot that finds NYC nightlife events for you. Twice a day it checks 6 different event websites, removes duplicates, scores everything based on your taste, and sends you the best picks via Telegram. You can also call a phone number and hear your recommendations read aloud.
+ra-killer is a robot that finds NYC nightlife events for you. Twice a day it checks 6 different event websites and removes duplicates. You can also call a phone number — the Clubstack hotline — and hear two operator-set messages read aloud: press 1 for the dancefloor message, press 2 for the dangerous illicit techno party message. Both messages are set verbatim via Telegram commands (`/set_main`, `/set_party`); there is no LLM in the hotline path.
 
-It learns what you like over time — every time you tap "Going" or "Pass" on a recommendation, it adjusts your taste profile so future picks get better.
+The recommendation engine is currently off. The scoring code still lives in `src/recommend/` but nothing calls it, and no recommendations are generated or sent.
 
 ## The server
 
@@ -127,8 +127,7 @@ All times are Eastern (NYC time).
 | Time | What happens |
 |------|-------------|
 | 6 AM + 6 PM | **Scrape** — hits all 6 event websites, deduplicates, stores new events |
-| 9 AM | **Recommend** — scores upcoming events, sends top 10 to Telegram |
-| Tuesday 9 PM | **Weekend preview** — sends Friday-Sunday event picks |
+| Tuesday 9 PM | **Weekend preview** — lists Friday-Sunday events (no scoring) |
 | Midnight | **Cleanup** — deletes events that already happened |
 
 If the server reboots and a job was missed, it catches up within 5 minutes (not instantly — that's intentional to avoid hammering everything at startup).
@@ -156,44 +155,32 @@ The same party often appears on RA, DICE, and Partiful with slightly different n
 2. **Fuzzy match** — if 2 out of 3 are close enough (title 85%+ similar, overlapping artists, venue 90%+ similar), it's the same event
 3. **Merge** — when a duplicate is found, it keeps the richest data from each source (longest artist list, best description, all source links)
 
-### The recommendation engine (how it picks events for you)
+### The recommendation engine (dormant)
 
-Two-phase scoring:
+Recommendation scoring is turned off. The code (`src/recommend/ranker.py`, `scorer.py`, `taste.py`) stays in the repo with no callers, and the old `recommendations` / `weekly_scripts` tables remain in Supabase as untouched archives. Only the midnight cleanup job still deletes old recommendation rows per its retention policy.
 
-**Phase 1: Quick filter (heuristic)**
-Scores every event based on your taste profile (which artists and venues you like/dislike). This is fast and free — no API calls.
+### Your taste profile
 
-**Phase 2: Claude scoring (AI)**
-Sends the top 50 matches + 15 random unknowns (for discovery) to Claude. Claude sees your full taste profile, your past feedback, and event details. It returns a 0-100 score with reasoning for each.
-
-Final score = 70% Claude + 30% heuristic. Top 10 get sent to you.
-
-### Your taste profile (how it knows what you like)
-
-Stored in Supabase as a list of artist names and venue names, each with a weight:
-- **Positive weight** (0.1 to 3.0) = you like this. Higher = stronger preference.
-- **Negative weight** (-1.0 to -0.1) = you don't like this. Penalized in scoring.
-- **Zero / not listed** = neutral.
-
-Weights change when you tap "Going" (+0.1) or "Pass" (-0.1) on recommendation cards. Capped at [-1.0, 3.0] so no single artist dominates.
+Stored in Supabase as a list of artist names and venue names, each with a weight. Viewable via `/taste`; editable via `/add_artist` and `/add_venue`. Nothing currently scores against it.
 
 ### Telegram bot (how you interact)
 
 | Command | What it does |
 |---------|-------------|
 | `/start` | Shows help |
-| `/upcoming` | Top 10 upcoming events |
+| `/set_main <text>` | Sets the press-1 hotline message (verbatim, max ~1500 chars) |
+| `/set_party <text>` | Sets the press-2 hotline message (verbatim, max ~1500 chars) |
+| `/preview_messages` | Shows both hotline messages with updated_at / updated_by |
 | `/taste` | Shows your current taste profile |
 | `/add_artist Honey Dijon` | Add a favorite artist (weight 2.0) |
 | `/add_venue Nowadays` | Add a favorite venue (weight 2.0) |
-| `/train 20` | Score 20 past events — sends cards with Going/Pass buttons to train your profile |
 | `/status` | Shows scraper health + event count |
 
 ### Twilio IVR (the phone hotline)
 
-Call the Twilio number → hear a greeting → press 1 for top 5 this week, press 2 for all recommendations → events read aloud with artist, venue, date, time, price, and match reasoning.
+Call the Twilio number → hear the two-option greeting → press 1 to hear the "main" message, press 2 to hear the "party" message. Both are read verbatim via Polly.Emma-Neural (en-GB) from the `hotline_messages` table — no caching, so edits take effect on the next call. If a slot has no message, the caller hears "nothing is available…" and can press 0 to return to the main menu.
 
-Twilio sends HTTP requests to `https://api.clubstack.net/twilio/voice` and `/twilio/gather`. Caddy routes these to the app.
+Twilio sends HTTP requests to `https://api.clubstack.net/twilio/voice`, `/twilio/gather`, and `/twilio/empty_nav`. Caddy routes these to the app.
 
 ### Supabase (the database)
 
@@ -204,9 +191,11 @@ All data lives in Supabase (hosted PostgreSQL). Key tables:
 | `raw_events` | Every event exactly as scraped. Never deleted. Audit trail. |
 | `events` | Deduplicated "canonical" events. What the bot actually recommends from. |
 | `taste_profile` | Your artist/venue preferences with weights. |
-| `recommendations` | Every recommendation sent + your feedback (approve/reject). |
+| `hotline_messages` | The two hotline messages (slots `main` and `party`), set via Telegram. |
 | `scrape_logs` | Success/failure/timing for each scraper run. |
 | `alert_log` | Failure alerts sent (used for rate-limiting to 1 per source per hour). |
+
+Archived (no longer read or written, except cleanup retention deletes): `recommendations`, `weekly_scripts`, `party_voice_note`.
 
 ## File layout
 
@@ -230,13 +219,13 @@ ra-killer/
 │   │   ├── lightandsound.py ← Light & Sound scraper
 │   │   └── nycnoise.py    ← NYC Noise scraper
 │   ├── recommend/
-│   │   ├── scorer.py      ← Heuristic + Claude scoring
-│   │   ├── ranker.py      ← Full ranking pipeline
-│   │   └── taste.py       ← Taste profile loader
+│   │   ├── scorer.py      ← Heuristic + Claude scoring (dormant)
+│   │   ├── ranker.py      ← Full ranking pipeline (dormant)
+│   │   └── taste.py       ← Taste profile loader (dormant)
 │   ├── bot/
-│   │   ├── telegram.py    ← Telegram bot commands + feedback
+│   │   ├── telegram.py    ← Telegram bot commands
 │   │   ├── twilio_ivr.py  ← Voice call endpoints
-│   │   └── tts.py         ← Text-to-speech script builder
+│   │   └── tts.py         ← Text-to-speech script builder (dormant)
 │   └── notify/
 │       └── alerts.py      ← Failure alerts via Telegram
 ├── scripts/
@@ -291,13 +280,6 @@ cd /opt/ra-killer
 uv run python scripts/scrape_once.py
 ```
 
-### Running manual recommendations
-
-```bash
-cd /opt/ra-killer
-uv run python scripts/recommend_once.py
-```
-
 ### Editing secrets
 
 ```bash
@@ -323,7 +305,7 @@ Should show: OpenSSH, 80, 443 allowed. Everything else blocked.
 | Problem | Likely cause | Fix |
 |---------|-------------|-----|
 | Bot doesn't respond to `/start` | App is down or Telegram token is wrong | `sudo systemctl status ra-killer` — check logs |
-| No recommendations at 9 AM | No events in DB (scrapers failed) | Check `/status` in Telegram, or run `scrape_once.py` manually |
+| Hotline says "nothing is available" | No message set for that slot | Set one with `/set_main` or `/set_party` in Telegram |
 | "Permission denied" when SSH-ing | Wrong key or key not on server | See "If you get locked out" above |
 | "Host key changed" SSH warning | Server was rebuilt | `ssh-keygen -R 89.167.49.1` then try again |
 | `curl https://api.clubstack.net/health` times out | Caddy or app is down, or firewall is wrong | SSH in, check `systemctl status caddy` and `systemctl status ra-killer` |

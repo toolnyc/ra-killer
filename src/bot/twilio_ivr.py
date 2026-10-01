@@ -1,20 +1,37 @@
 from __future__ import annotations
 
-import asyncio
-from datetime import date, timedelta
-
-import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 from twilio.twiml.voice_response import Gather, VoiceResponse
 
 from src import db
-from src.config import settings
 from src.log import get_logger
 
 logger = get_logger("twilio")
 
 router = APIRouter(prefix="/twilio")
+
+VOICE = "Polly.Emma-Neural"
+LANGUAGE = "en-GB"
+
+GREETING = (
+    "You've reached Clubstack. We are New York's only dancefloor hotline. "
+    "We motivate you to shake that ass. "
+    "Press 1 to find a dancefloor, press 2 to learn more about a dangerous "
+    "illicit techno party."
+)
+
+EMPTY_SLOT_MESSAGE = (
+    "Nothing is available at the moment, please call back later or press 0 "
+    "to return to the main menu."
+)
+
+# Digit -> hotline_messages slot
+SLOT_BY_DIGIT = {"1": "main", "2": "party"}
+
+
+def _say(resp: VoiceResponse, text: str) -> None:
+    resp.say(text, voice=VOICE, language=LANGUAGE)
 
 
 @router.post("/voice")
@@ -27,149 +44,61 @@ async def voice_entry(request: Request) -> Response:
         method="POST",
         timeout=5,
     )
-    gather.say(
-        "You've reached Clubstack. We are New York's only dancefloor hotline. "
-        "We motivate you to shake that ass. "
-        "Press 1 to find a dancefloor, press 2 to hear the dancefloor, "
-        "press 3 for information on a dangerous illicit techno party.",
-        voice="Polly.Emma-Neural",
-        language="en-GB",
-    )
+    gather.say(GREETING, voice=VOICE, language=LANGUAGE)
     resp.append(gather)
-    resp.say("No input received. Goodbye.", voice="Polly.Emma-Neural", language="en-GB")
+    _say(resp, "No input received. Goodbye.")
     return Response(content=str(resp), media_type="application/xml")
 
 
 @router.post("/gather")
 async def gather_handler(request: Request) -> Response:
-    """Handle digit input."""
+    """Handle digit input from the main menu."""
     form = await request.form()
     digit = form.get("Digits", "")
 
     resp = VoiceResponse()
 
-    if digit in ("1", "2"):
-        script = _get_published_script()
-        resp.say(script, voice="Polly.Emma-Neural", language="en-GB")
-        resp.hangup()
-    elif digit == "3":
-        resp.redirect("/twilio/party_instructions")
+    slot = SLOT_BY_DIGIT.get(digit)
+    if slot:
+        message = db.get_hotline_message(slot)
+        if message and message.get("body"):
+            _say(resp, message["body"])
+            resp.hangup()
+        else:
+            resp.redirect("/twilio/empty_nav", method="POST")
     else:
-        resp.say("Invalid input. Goodbye.", voice="Polly.Emma-Neural", language="en-GB")
+        _say(resp, "Invalid input. Goodbye.")
         resp.hangup()
 
     return Response(content=str(resp), media_type="application/xml")
 
 
-def _get_published_script() -> str:
-    """Return the published weekly script, or a placeholder if none exists."""
-    today = date.today()
-    week_start = today - timedelta(days=today.weekday())  # Monday
-    published = db.get_published_script(week_start)
-    if published and published.script_text:
-        return published.script_text
+@router.post("/empty_nav")
+async def empty_nav(request: Request) -> Response:
+    """Empty-slot flow: prompt once, then 0 returns to the main menu.
 
-    return "No recommendations this week. Call back next week."
-
-
-@router.get("/party_audio")
-async def party_audio(request: Request) -> Response:
-    """Proxy and transcode party voice note to MP3 for Twilio compatibility."""
-    try:
-        voice_note = db.get_party_voice_note()
-        storage_url = voice_note["media_url"] if voice_note else db.get_party_voice_storage_url()
-        async with httpx.AsyncClient() as client:
-            upstream = await client.get(storage_url, timeout=10.0)
-            upstream.raise_for_status()
-        ogg_data = upstream.content
-
-        # Transcode OGG/Opus → MP3 via ffmpeg (Twilio reliably plays MP3 on PSTN)
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-i", "pipe:0", "-f", "mp3", "-ab", "64k", "pipe:1",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        mp3_data, _ = await asyncio.wait_for(proc.communicate(input=ogg_data), timeout=15.0)
-
-        return Response(
-            content=mp3_data,
-            media_type="audio/mpeg",
-            headers={"Cache-Control": "no-cache"},
-        )
-    except Exception:
-        logger.exception("party_audio_proxy_failed")
-        return Response(status_code=404)
-
-
-@router.post("/party_instructions")
-async def party_instructions(request: Request) -> Response:
-    """Play back party voice instructions, or fallback if none available."""
-    voice_note = None
-    has_voice = False
-    try:
-        voice_note = db.get_party_voice_note()
-        has_voice = bool(voice_note and voice_note.get("media_url"))
-    except Exception:
-        logger.exception("party_instructions_db_error")
-
-    if not has_voice:
-        try:
-            has_voice = db.party_voice_exists_in_storage()
-        except Exception:
-            logger.exception("party_instructions_storage_lookup_error")
-
-    if has_voice:
-        # Use updated_at as cache-buster so Twilio fetches fresh audio after each upload
-        ts = ""
-        if voice_note and voice_note.get("updated_at"):
-            ts = voice_note["updated_at"].replace(":", "").replace("-", "").replace("+", "").replace(".", "")
-        audio_url = f"{settings.base_url}/twilio/party_audio?v={ts}"
-    else:
-        audio_url = ""
-
+    First entry (from /twilio/gather redirect) says the empty-slot message and
+    gathers a digit. The gather callback (?step=nav) redirects on 0 and hangs
+    up on anything else, including timeout.
+    """
     resp = VoiceResponse()
 
-    if audio_url:
-        resp.play(audio_url)
-
-        resp.pause(length=1)
-        resp.say(
-            "Press star to return to the main menu, or hang up.",
-            voice="Polly.Emma-Neural",
-            language="en-GB",
-        )
+    if request.query_params.get("step") != "nav":
         gather = Gather(
             num_digits=1,
-            action="/twilio/party_nav",
+            action="/twilio/empty_nav?step=nav",
             method="POST",
             timeout=5,
         )
-        gather.pause(length=5)
+        gather.say(EMPTY_SLOT_MESSAGE, voice=VOICE, language=LANGUAGE)
         resp.append(gather)
         resp.hangup()
     else:
-        resp.say(
-            "No party instructions available. Returning to main menu.",
-            voice="Polly.Emma-Neural",
-            language="en-GB",
-        )
-        resp.redirect("/twilio/gather")
-
-    return Response(content=str(resp), media_type="application/xml")
-
-
-@router.post("/party_nav")
-async def party_navigation(request: Request) -> Response:
-    """Handle navigation after party instructions playback."""
-    form = await request.form()
-    digits = form.get("Digits", "")
-
-    resp = VoiceResponse()
-
-    if digits == "*":
-        resp.redirect("/twilio/gather")
-    else:
-        resp.hangup()
+        form = await request.form()
+        digit = form.get("Digits", "")
+        if digit == "0":
+            resp.redirect("/twilio/voice", method="POST")
+        else:
+            resp.hangup()
 
     return Response(content=str(resp), media_type="application/xml")
