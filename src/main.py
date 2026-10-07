@@ -10,18 +10,12 @@ from src.bot.telegram import get_app
 from src.bot.twilio_ivr import router as twilio_router
 from src.config import settings
 from src.log import get_logger
-from src.scheduler import create_scheduler
 
 logger = get_logger("main")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start scheduler
-    scheduler = create_scheduler()
-    scheduler.start()
-    logger.info("scheduler_started")
-
     # Start Telegram polling in background
     tg_app = None
     if settings.telegram_bot_token:
@@ -44,7 +38,6 @@ async def lifespan(app: FastAPI):
         await tg_app.updater.stop()
         await tg_app.stop()
         await tg_app.shutdown()
-    scheduler.shutdown()
     logger.info("shutdown_complete")
 
 

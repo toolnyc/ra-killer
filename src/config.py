@@ -1,19 +1,8 @@
-from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
-
-    # Supabase
-    supabase_url: str = ""
-    supabase_key: str = Field(
-        default="",
-        validation_alias=AliasChoices("SUPABASE_KEY", "SUPABASE_SECRET_KEY"),
-    )
-
-    # Anthropic
-    anthropic_api_key: str = ""
 
     # Telegram
     telegram_bot_token: str = ""
@@ -27,7 +16,7 @@ class Settings(BaseSettings):
     # App
     base_url: str = "http://localhost:8000"
     log_level: str = "INFO"
-    claude_model: str = "claude-sonnet-4-5-20250929"
+    sqlite_path: str = "/opt/ra-killer/hotline.db"
 
 
 settings = Settings()
