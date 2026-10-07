@@ -23,7 +23,7 @@ NYC dancefloor hotline. The operator sets messages via Telegram; the Twilio IVR 
 
 ### Deployment
 - Production runs as a systemd service on Hetzner (`ra-remote` in `~/.ssh/config`)
-- Deploy: `ssh ra-remote 'cd /opt/ra-killer && git pull && uv sync && sudo systemctl restart ra-killer'`
+- Deploy: `ssh ra-remote 'cd /opt/ra-killer && git pull && /home/deploy/.local/bin/uv sync && sudo systemctl restart ra-killer'` (uv is not on the non-interactive ssh PATH — use the absolute path)
 - Logs: `ssh ra-remote 'sudo journalctl -u ra-killer -n 100 --no-pager -o cat'`
 - structlog uses JSONRenderer in production — exceptions only appear if `structlog.processors.format_exc_info` is in the processor chain (it is, as of this writing). Always add `error=str(exc)` to exception log calls so the message is visible even without a full traceback.
 
