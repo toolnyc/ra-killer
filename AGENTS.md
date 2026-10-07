@@ -17,7 +17,7 @@ NYC dancefloor hotline. The operator sets messages via Telegram; the Twilio IVR 
 - `src/bot/` — Telegram bot + Twilio IVR (the only live paths)
 - `src/scrapers/`, `src/recommend/` — dormant pipeline code (no callers; kept for possible reuse)
 - Hotline messages live in a local SQLite `hotline_messages` table (slots: `main`, `party`), managed by `src/db.py`; DB path from `SQLITE_PATH` env var (default `/opt/ra-killer/hotline.db`)
-- Supabase was removed (2026-10); no data migration — messages are re-set via Telegram (`/set_main`, `/set_party`)
+- Supabase was removed (2026-10); no data migration — messages are re-set via Telegram (`/set_main`, `/set_party`). Old DDL/migrations archived in `archive/supabase/`
 
 ## Service Integration Notes
 
