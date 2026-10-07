@@ -1,4 +1,4 @@
-> **Where things live** - Client: - | Bucket: `lab/` | Dropbox: `-` | Registry: `~/Code/toolhub/CoS/REGISTRY.md`
+> **Where things live** - Client: - | Bucket: `lab/` | Dropbox: `-` | Registry: Notion "Repos" DB (IDs in `~/Code/toolhub/CoS/NOTION.md`)
 
 @import /Users/pete/Code/.agent/conventions.md
 
